@@ -6,15 +6,28 @@ require_once CS_PLUGIN_PATH . 'includes/comercios_pages.php';
 require_once CS_PLUGIN_PATH . 'includes/propuestas_pages.php';
 require_once CS_PLUGIN_PATH . 'includes/coupon_management_system.php';
 
+
 function cs_register_admin_menu() {
     add_menu_page(
-        'Cupones',
+        'Dashboard',
         'Cupones',
         'manage_options',
         'cs_dashboard',
         'cs_dashboard_page',
         'dashicons-tickets-alt',
         25
+    );
+	
+	// Creamos explícitamente la primera entrada del submenú que apunta
+    // al mismo slug del top-level. Esto mostrará "Dashboard" como primera
+    // opción del submenú en lugar de la duplicación automática.
+    add_submenu_page(
+        'cs_dashboard',
+        'Dashboard',              // page_title del submenú
+        'Dashboard',              // menu_title mostrado en la lista de submenús
+        'manage_options',
+        'cs_dashboard',           // mismo slug del menú padre
+        'cs_dashboard_page'       // misma callback
     );
 
     add_submenu_page(
@@ -42,7 +55,7 @@ function cs_register_admin_menu() {
         'manage_options',
         'cs_cupones',
         'cs_cupones_page'
-    );
+    );	
     
     add_submenu_page(
         'cs_dashboard',
@@ -295,7 +308,7 @@ function cs_render_comercio_coupons_table($coupons) {
         // Valor
         echo '<td>';
         if ($coupon->tipo === 'importe') {
-            echo ' . number_format($coupon->valor_restante, 2) . ' /  . number_format($coupon->valor, 2);
+            echo '$' . number_format($coupon->valor_restante, 2) . ' / '  . number_format($coupon->valor, 2);
         } else {
             echo intval($coupon->valor_restante) . ' / ' . intval($coupon->valor) . ' ' . esc_html($coupon->unidad_descripcion ?: 'unidades');
         }
@@ -400,16 +413,6 @@ function cs_add_comercio_capabilities() {
 require_once CS_PLUGIN_PATH . 'includes/coupon_emission_system.php';
 require_once CS_PLUGIN_PATH . 'includes/coupon_admin_pages.php';
 
-// Actualizar función de activación
-function cs_activate_plugin() {
-    cs_register_roles();
-	cs_tickets_create_tables();
-    cs_schedule_coupon_emission(); // Programar cron job
-    
-    // Flush rewrite rules si es necesario
-    flush_rewrite_rules();
-}
-
 // Función de desactivación
 register_deactivation_hook(__FILE__, 'cs_deactivate_plugin');
 function cs_deactivate_plugin() {
@@ -448,7 +451,7 @@ function cs_ajax_check_coupon_public() {
         ];
         
         if ($coupon->tipo === 'importe') {
-            $public_info['valor'] = ' . number_format($coupon->valor_restante, 2);
+            $public_info['valor'] = '$' . number_format($coupon->valor_restante, 2);
         } else {
             $public_info['valor'] = intval($coupon->valor_restante) . ' ' . ($coupon->unidad_descripcion ?: 'unidades');
         }
@@ -513,7 +516,7 @@ function cs_shortcode_mis_cupones($atts) {
         
         $output .= '<p><strong>Valor:</strong> ';
         if ($coupon->tipo === 'importe') {
-            $output .= ' . number_format($coupon->valor_restante, 2);
+            $output .= '$' . number_format($coupon->valor_restante, 2);
         } else {
             $output .= intval($coupon->valor_restante) . ' ' . esc_html($coupon->unidad_descripcion ?: 'unidades');
         }

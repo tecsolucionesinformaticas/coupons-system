@@ -425,7 +425,7 @@ class CS_Coupon_Manager {
             $coupon->codigo_serie,
             $amount_redeemed,
             $coupon->valor,
-            $coupon->tipo === 'importe' ? ' : $coupon->unidad_descripcion,
+            $coupon->tipo === 'importe' ? '$' : $coupon->unidad_descripcion,
             $remaining_value,
             $user_info
         );

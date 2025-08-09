@@ -3,31 +3,6 @@
  * Páginas de administración para cupones
  */
 
-// Agregar menús de cupones
-add_action('admin_menu', 'cs_add_coupon_menus');
-
-function cs_add_coupon_menus() {
-    // Submenú para cupones
-    add_submenu_page(
-        'cs_dashboard',
-        'Cupones',
-        'Cupones',
-        'manage_options',
-        'cs_cupones',
-        'cs_cupones_page'
-    );
-    
-    // Submenú para emisión manual
-    add_submenu_page(
-        'cs_dashboard',
-        'Emisión Manual',
-        'Emisión Manual',
-        'manage_options',
-        'cs_emision_manual',
-        'cs_emision_manual_page'
-    );
-}
-
 /**
  * Página principal de cupones
  */
@@ -437,24 +412,30 @@ function cs_get_status_label($status) {
 /**
  * Renderizar vista detallada de cupón
  */
+/**
+ * Renderizar vista detallada de cupón
+ */
 function cs_cupones_render_view() {
-    $coupon_id = intval($_GET['id'] ?? 0);
-    
-    if (!$coupon_id) {
-        echo '<div class="notice notice-error"><p>ID de cupón inválido.</p></div>';
+    $coupon_id = intval( $_GET['id'] ?? 0 );
+
+    if ( ! $coupon_id ) {
+        echo '<div class="notice notice-error"><p>' . esc_html__( 'ID de cupón inválido.', 'cs' ) . '</p></div>';
         return;
     }
-    
+
     global $wpdb;
-    $table_coupons = $wpdb->prefix . 'coupons';
+    $table_coupons   = $wpdb->prefix . 'coupons';
     $table_proposals = $wpdb->prefix . 'coupon_proposals';
-    
-    $coupon = $wpdb->get_row($wpdb->prepare("
+
+    $coupon = $wpdb->get_row(
+        $wpdb->prepare(
+            "
         SELECT c.*, 
                u.display_name as comercio_nombre,
                p.nombre as propuesta_nombre,
                p.descripcion as propuesta_descripcion,
                owner.display_name as propietario_nombre,
+               owner.user_email as propietario_email,
                used_by.display_name as usado_por_nombre
         FROM {$table_coupons} c
         LEFT JOIN {$wpdb->users} u ON c.comercio_id = u.ID
@@ -462,244 +443,242 @@ function cs_cupones_render_view() {
         LEFT JOIN {$wpdb->users} owner ON c.propietario_user_id = owner.ID
         LEFT JOIN {$wpdb->users} used_by ON c.usado_por = used_by.ID
         WHERE c.id = %d
-    ", $coupon_id));
-    
-    if (!$coupon) {
-        echo '<div class="notice notice-error"><p>Cupón no encontrado.</p></div>';
+        ",
+            $coupon_id
+        )
+    );
+
+    if ( ! $coupon ) {
+        echo '<div class="notice notice-error"><p>' . esc_html__( 'Cupón no encontrado.', 'cs' ) . '</p></div>';
         return;
     }
-    
+
+    // Prepara valores para mostrar
+    $tipo               = isset( $coupon->tipo ) ? $coupon->tipo : '';
+    $unidad_desc        = ! empty( $coupon->unidad_descripcion ) ? $coupon->unidad_descripcion : 'unidades';
+    $valor              = isset( $coupon->valor ) ? floatval( $coupon->valor ) : 0;
+    $valor_restante     = isset( $coupon->valor_restante ) ? floatval( $coupon->valor_restante ) : 0;
+    $permite_uso_parcial = ! empty( $coupon->permite_uso_parcial );
+
+    // URLs/acciones seguras
+    $view_url     = esc_url( admin_url( 'admin.php?page=cs_cupones&action=view&id=' . $coupon->id ) );
+    $transfer_url = esc_url( admin_url( 'admin.php?page=cs_cupones&action=transfer&id=' . $coupon->id ) );
+    $list_url     = esc_url( admin_url( 'admin.php?page=cs_cupones' ) );
+
+    // Nonces
+    $nonce_action = wp_create_nonce( 'cs_coupon_action' );
+    $nonce_redeem = wp_create_nonce( 'cs_coupon_redeem' );
+
     echo '<div class="wrap">';
-    echo '<h1>Detalle del Cupón</h1>';
-    
-    echo '<div style="display: flex; gap: 20px; margin: 20px 0;">';
-    
-    // Información principal
-    echo '<div style="flex: 2; background: white; padding: 20px; border: 1px solid #ddd; border-radius: 4px;">';
-    echo '<h2>Información General</h2>';
+    echo '<h1>' . esc_html__( 'Detalle del Cupón', 'cs' ) . '</h1>';
+
+    echo '<div style="display:flex; gap:20px; margin:20px 0;">';
+
+    // ------------------------
+    // Información principal (lado izquierdo)
+    // ------------------------
+    echo '<div style="flex:2; background:#fff; padding:20px; border:1px solid #ddd; border-radius:4px;">';
+    echo '<h2>' . esc_html__( 'Información General', 'cs' ) . '</h2>';
     echo '<table class="form-table">';
-    
-    echo '<tr><th>Código de Serie:</th><td><strong style="font-size: 16px;">' . esc_html($coupon->codigo_serie) . '</strong></td></tr>';
-    echo '<tr><th>Código Secreto:</th><td><code style="background: #f0f0f0; padding: 2px 6px;">' . esc_html($coupon->codigo_secreto) . '</code></td></tr>';
-    echo '<tr><th>Estado:</th><td><span style="color: ' . cs_get_status_color($coupon->estado) . '; font-weight: bold;">' . cs_get_status_label($coupon->estado) . '</span></td></tr>';
-    echo '<tr><th>Comercio:</th><td>' . esc_html($coupon->comercio_nombre ?: 'Sin nombre') . '</td></tr>';
-    echo '<tr><th>Propuesta:</th><td>' . esc_html($coupon->propuesta_nombre ?: 'N/A') . '</td></tr>';
-    
-    if ($coupon->propuesta_descripcion) {
-        echo '<tr><th>Descripción:</th><td>' . esc_html($coupon->propuesta_descripcion) . '</td></tr>';
+
+    // Código serie / secreto / estado / comercio / propuesta
+    echo '<tr><th>' . esc_html__( 'Código de Serie:', 'cs' ) . '</th><td><strong style="font-size:16px;">' . esc_html( $coupon->codigo_serie ) . '</strong></td></tr>';
+    echo '<tr><th>' . esc_html__( 'Código Secreto:', 'cs' ) . '</th><td><code style="background:#f0f0f0; padding:2px 6px;">' . esc_html( $coupon->codigo_secreto ) . '</code></td></tr>';
+
+    $status_color = function_exists( 'cs_get_status_color' ) ? cs_get_status_color( $coupon->estado ) : '#000';
+    $status_label = function_exists( 'cs_get_status_label' ) ? cs_get_status_label( $coupon->estado ) : esc_html( $coupon->estado );
+
+    echo '<tr><th>' . esc_html__( 'Estado:', 'cs' ) . '</th><td><span style="color:' . esc_attr( $status_color ) . '; font-weight:bold;">' . esc_html( $status_label ) . '</span></td></tr>';
+    echo '<tr><th>' . esc_html__( 'Comercio:', 'cs' ) . '</th><td>' . esc_html( $coupon->comercio_nombre ?: esc_html__( 'Sin nombre', 'cs' ) ) . '</td></tr>';
+    echo '<tr><th>' . esc_html__( 'Propuesta:', 'cs' ) . '</th><td>' . esc_html( $coupon->propuesta_nombre ?: 'N/A' ) . '</td></tr>';
+
+    if ( ! empty( $coupon->propuesta_descripcion ) ) {
+        echo '<tr><th>' . esc_html__( 'Descripción:', 'cs' ) . '</th><td>' . esc_html( $coupon->propuesta_descripcion ) . '</td></tr>';
     }
-    
-    // Valor
-    echo '<tr><th>Tipo:</th><td>' . ucfirst($coupon->tipo) . '</td></tr>';
-    echo '<tr><th>Valor Original:</th><td>';
-    if ($coupon->tipo === 'importe') {
-        echo 'tipo === 'importe') {
-            echo '$' . number_format($coupon->valor_restante, 2) . ' / $' . number_format($coupon->valor, 2);
-        } else {
-            echo intval($coupon->valor_restante) . ' / ' . intval($coupon->valor) . ' ' . esc_html($coupon->unidad_descripcion ?: 'unidades');
-        }
-        echo '</td>';
-        
-        // Propietario
-        echo '<td>';
-        if ($coupon->propietario_nombre) {
-            echo esc_html($coupon->propietario_nombre);
-        } elseif ($coupon->propietario_email) {
-            echo esc_html($coupon->propietario_email);
-        } else {
-            echo '<em>Sin asignar</em>';
-        }
-        echo '</td>';
-        
-        // Estado
-        $status_color = cs_get_status_color($coupon->estado);
-        echo '<td><span style="color: ' . $status_color . '; font-weight: bold;">';
-        echo esc_html(cs_get_status_label($coupon->estado));
-        echo '</span></td>';
-        
-        // Vigencia
-        echo '<td>';
-        echo date_i18n('d/m/Y', strtotime($coupon->fecha_inicio)) . '<br>';
-        echo '<small>hasta ' . date_i18n('d/m/Y', strtotime($coupon->fecha_fin)) . '</small>';
-        echo '</td>';
-        
-        // Acciones
-        echo '<td>';
-        $actions = [];
-        
-        $actions[] = '<a href="' . admin_url('admin.php?page=cs_cupones&action=view&id=' . $coupon->id) . '">Ver</a>';
-        
-        if (in_array($coupon->estado, ['pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user'])) {
-            $actions[] = '<a href="' . admin_url('admin.php?page=cs_cupones&action=transfer&id=' . $coupon->id) . '">Transferir</a>';
-        }
-        
-        if ($coupon-> . number_format($coupon->valor, 2);
+
+    // Tipo y valores
+    echo '<tr><th>' . esc_html__( 'Tipo:', 'cs' ) . '</th><td>' . esc_html( ucfirst( $tipo ) ) . '</td></tr>';
+
+    // Valor original
+    echo '<tr><th>' . esc_html__( 'Valor Original:', 'cs' ) . '</th><td>';
+    if ( $tipo === 'importe' ) {
+        echo esc_html( '$' . number_format( $valor, 2 ) );
     } else {
-        echo intval($coupon->valor) . ' ' . esc_html($coupon->unidad_descripcion ?: 'unidades');
+        echo esc_html( intval( $valor ) . ' ' . $unidad_desc );
     }
     echo '</td></tr>';
-    
-    echo '<tr><th>Valor Restante:</th><td>';
-    if ($coupon->tipo === 'importe') {
-        echo 'tipo === 'importe') {
-            echo '$' . number_format($coupon->valor_restante, 2) . ' / $' . number_format($coupon->valor, 2);
-        } else {
-            echo intval($coupon->valor_restante) . ' / ' . intval($coupon->valor) . ' ' . esc_html($coupon->unidad_descripcion ?: 'unidades');
-        }
-        echo '</td>';
-        
-        // Propietario
-        echo '<td>';
-        if ($coupon->propietario_nombre) {
-            echo esc_html($coupon->propietario_nombre);
-        } elseif ($coupon->propietario_email) {
-            echo esc_html($coupon->propietario_email);
-        } else {
-            echo '<em>Sin asignar</em>';
-        }
-        echo '</td>';
-        
-        // Estado
-        $status_color = cs_get_status_color($coupon->estado);
-        echo '<td><span style="color: ' . $status_color . '; font-weight: bold;">';
-        echo esc_html(cs_get_status_label($coupon->estado));
-        echo '</span></td>';
-        
-        // Vigencia
-        echo '<td>';
-        echo date_i18n('d/m/Y', strtotime($coupon->fecha_inicio)) . '<br>';
-        echo '<small>hasta ' . date_i18n('d/m/Y', strtotime($coupon->fecha_fin)) . '</small>';
-        echo '</td>';
-        
-        // Acciones
-        echo '<td>';
-        $actions = [];
-        
-        $actions[] = '<a href="' . admin_url('admin.php?page=cs_cupones&action=view&id=' . $coupon->id) . '">Ver</a>';
-        
-        if (in_array($coupon->estado, ['pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user'])) {
-            $actions[] = '<a href="' . admin_url('admin.php?page=cs_cupones&action=transfer&id=' . $coupon->id) . '">Transferir</a>';
-        }
-        
-        if ($coupon-> . number_format($coupon->valor_restante, 2);
+
+    // Valor restante
+    echo '<tr><th>' . esc_html__( 'Valor Restante:', 'cs' ) . '</th><td>';
+    if ( $tipo === 'importe' ) {
+        echo esc_html( '$' . number_format( $valor_restante, 2 ) ) . ' / ' . esc_html( '$' . number_format( $valor, 2 ) );
     } else {
-        echo intval($coupon->valor_restante) . ' ' . esc_html($coupon->unidad_descripcion ?: 'unidades');
+        echo esc_html( intval( $valor_restante ) . ' / ' . intval( $valor ) . ' ' . $unidad_desc );
     }
     echo '</td></tr>';
-    
-    echo '<tr><th>Uso Parcial:</th><td>' . ($coupon->permite_uso_parcial ? 'Permitido' : 'No permitido') . '</td></tr>';
-    
+
+    // Uso parcial
+    echo '<tr><th>' . esc_html__( 'Uso Parcial:', 'cs' ) . '</th><td>' . ( $permite_uso_parcial ? esc_html__( 'Permitido', 'cs' ) : esc_html__( 'No permitido', 'cs' ) ) . '</td></tr>';
+
     // Fechas
-    echo '<tr><th>Fecha Inicio:</th><td>' . date_i18n('d/m/Y', strtotime($coupon->fecha_inicio)) . '</td></tr>';
-    echo '<tr><th>Fecha Fin:</th><td>' . date_i18n('d/m/Y', strtotime($coupon->fecha_fin)) . '</td></tr>';
-    echo '<tr><th>Creado:</th><td>' . date_i18n('d/m/Y H:i:s', strtotime($coupon->created_at)) . '</td></tr>';
-    echo '<tr><th>Actualizado:</th><td>' . date_i18n('d/m/Y H:i:s', strtotime($coupon->updated_at)) . '</td></tr>';
-    
+    echo '<tr><th>' . esc_html__( 'Fecha Inicio:', 'cs' ) . '</th><td>' . esc_html( date_i18n( 'd/m/Y', strtotime( $coupon->fecha_inicio ) ) ) . '</td></tr>';
+    echo '<tr><th>' . esc_html__( 'Fecha Fin:', 'cs' ) . '</th><td>' . esc_html( date_i18n( 'd/m/Y', strtotime( $coupon->fecha_fin ) ) ) . '</td></tr>';
+    echo '<tr><th>' . esc_html__( 'Creado:', 'cs' ) . '</th><td>' . esc_html( date_i18n( 'd/m/Y H:i:s', strtotime( $coupon->created_at ) ) ) . '</td></tr>';
+    echo '<tr><th>' . esc_html__( 'Actualizado:', 'cs' ) . '</th><td>' . esc_html( date_i18n( 'd/m/Y H:i:s', strtotime( $coupon->updated_at ) ) ) . '</td></tr>';
+
     // Propietario
-    echo '<tr><th>Propietario:</th><td>';
-    if ($coupon->propietario_nombre) {
-        echo esc_html($coupon->propietario_nombre) . ' (' . esc_html($coupon->propietario_email) . ')';
-    } elseif ($coupon->propietario_email) {
-        echo esc_html($coupon->propietario_email);
+    echo '<tr><th>' . esc_html__( 'Propietario:', 'cs' ) . '</th><td>';
+    if ( ! empty( $coupon->propietario_nombre ) ) {
+        echo esc_html( $coupon->propietario_nombre );
+        if ( ! empty( $coupon->propietario_email ) ) {
+            echo ' (' . esc_html( $coupon->propietario_email ) . ')';
+        }
+    } elseif ( ! empty( $coupon->propietario_email ) ) {
+        echo esc_html( $coupon->propietario_email );
     } else {
-        echo '<em>Sin asignar</em>';
+        echo '<em>' . esc_html__( 'Sin asignar', 'cs' ) . '</em>';
     }
     echo '</td></tr>';
-    
-    // Uso
-    if ($coupon->fecha_ultimo_uso) {
-        echo '<tr><th>Último Uso:</th><td>' . date_i18n('d/m/Y H:i:s', strtotime($coupon->fecha_ultimo_uso)) . '</td></tr>';
+
+    // Uso y notas
+    if ( ! empty( $coupon->fecha_ultimo_uso ) ) {
+        echo '<tr><th>' . esc_html__( 'Último Uso:', 'cs' ) . '</th><td>' . esc_html( date_i18n( 'd/m/Y H:i:s', strtotime( $coupon->fecha_ultimo_uso ) ) ) . '</td></tr>';
     }
-    
-    if ($coupon->usado_por_nombre) {
-        echo '<tr><th>Usado por:</th><td>' . esc_html($coupon->usado_por_nombre) . '</td></tr>';
+
+    if ( ! empty( $coupon->usado_por_nombre ) ) {
+        echo '<tr><th>' . esc_html__( 'Usado por:', 'cs' ) . '</th><td>' . esc_html( $coupon->usado_por_nombre ) . '</td></tr>';
     }
-    
-    if ($coupon->notas_uso) {
-        echo '<tr><th>Notas:</th><td>' . esc_html($coupon->notas_uso) . '</td></tr>';
+
+    if ( ! empty( $coupon->notas_uso ) ) {
+        echo '<tr><th>' . esc_html__( 'Notas:', 'cs' ) . '</th><td>' . esc_html( $coupon->notas_uso ) . '</td></tr>';
     }
-    
+
     echo '</table>';
-    echo '</div>';
-    
-    // Panel de acciones
-    echo '<div style="flex: 1; background: white; padding: 20px; border: 1px solid #ddd; border-radius: 4px; height: fit-content;">';
-    echo '<h2>Acciones</h2>';
-    
-    if (in_array($coupon->estado, ['pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user'])) {
-        echo '<p><a href="' . admin_url('admin.php?page=cs_cupones&action=transfer&id=' . $coupon->id) . '" class="button button-primary">Transferir Cupón</a></p>';
+    echo '</div>'; // cierre info principal
+
+    // ------------------------
+    // Panel de acciones (lado derecho)
+    // ------------------------
+    echo '<div style="flex:1; background:#fff; padding:20px; border:1px solid #ddd; border-radius:4px; height:fit-content;">';
+    echo '<h2>' . esc_html__( 'Acciones', 'cs' ) . '</h2>';
+
+    // Botón transferir (según estados)
+    if ( in_array( $coupon->estado, array( 'pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user' ), true ) ) {
+        echo '<p><a href="' . $transfer_url . '" class="button button-primary">' . esc_html__( 'Transferir Cupón', 'cs' ) . '</a></p>';
     }
-    
-    if ($coupon->estado !== 'anulado' && $coupon->estado !== 'completado') {
-        echo '<p><button onclick="cancelCoupon(' . $coupon->id . ')" class="button" style="color: #dc3232;">Anular Cupón</button></p>';
+
+    // Anular cupón (si no está anulado ni completado)
+    if ( 'anulado' !== $coupon->estado && 'completado' !== $coupon->estado ) {
+        echo '<p><button type="button" onclick="cs_cancelCoupon(' . esc_attr( $coupon->id ) . ')" class="button" style="color:#dc3232;">' . esc_html__( 'Anular Cupón', 'cs' ) . '</button></p>';
     }
-    
-    if (in_array($coupon->estado, ['asignado_user', 'asignado_email', 'parcial'])) {
+
+    // Canjear (si corresponde)
+    if ( in_array( $coupon->estado, array( 'asignado_user', 'asignado_email', 'parcial' ), true ) ) {
         echo '<hr>';
-        echo '<h3>Canjear Cupón</h3>';
-        echo '<form id="redeem-form">';
-        
-        if ($coupon->permite_uso_parcial && $coupon->valor_restante > 0) {
-            echo '<p><label>Cantidad a canjear:</label><br>';
-            echo '<input type="number" id="redeem-amount" step="0.01" min="0.01" max="' . $coupon->valor_restante . '" value="' . $coupon->valor_restante . '"></p>';
+        echo '<h3>' . esc_html__( 'Canjear Cupón', 'cs' ) . '</h3>';
+        echo '<form id="cs-redeem-form">';
+
+        if ( $permite_uso_parcial && $valor_restante > 0 ) {
+            // Si es importe, permitir step decimal
+            $step = $tipo === 'importe' ? '0.01' : '1';
+            echo '<p><label for="cs-redeem-amount">' . esc_html__( 'Cantidad a canjear:', 'cs' ) . '</label><br>';
+            echo '<input type="number" id="cs-redeem-amount" name="amount" step="' . esc_attr( $step ) . '" min="0.01" max="' . esc_attr( $valor_restante ) . '" value="' . esc_attr( $valor_restante ) . '"></p>';
         }
-        
-        echo '<p><button type="button" onclick="redeemCoupon(' . $coupon->id . ')" class="button button-secondary">Canjear</button></p>';
+
+        echo '<p><button type="button" onclick="cs_redeemCoupon(' . esc_attr( $coupon->id ) . ')" class="button button-secondary">' . esc_html__( 'Canjear', 'cs' ) . '</button></p>';
         echo '</form>';
     }
-    
+
     echo '<hr>';
-    echo '<p><a href="' . admin_url('admin.php?page=cs_cupones') . '" class="button">← Volver al Listado</a></p>';
-    echo '</div>';
-    
-    echo '</div>';
-    echo '</div>';
-    
-    // JavaScript
-    echo '<script>
-    function cancelCoupon(couponId) {
-        const reason = prompt("Razón para anular el cupón:");
-        if (!reason) return;
-        
-        if (confirm("¿Seguro que deseas anular este cupón?")) {
-            jQuery.post(ajaxurl, {
+    echo '<p><a href="' . $list_url . '" class="button">' . esc_html__( '← Volver al Listado', 'cs' ) . '</a></p>';
+
+    echo '</div>'; // cierre panel acciones
+
+    echo '</div>'; // cierre contenedor flex
+    echo '</div>'; // cierre wrap
+
+    // ------------------------
+    // JavaScript (inyección segura de datos)
+    // ------------------------
+    $js_vars = array(
+        'ajaxurl'       => admin_url( 'admin-ajax.php' ),
+        'cancel_nonce'  => $nonce_action,
+        'redeem_nonce'  => $nonce_redeem,
+        'secret_code'   => $coupon->codigo_secreto,
+        'coupon_id'     => intval( $coupon->id ),
+    );
+    $js_vars_json = wp_json_encode( $js_vars );
+    ?>
+    <script type="text/javascript">
+    (function($){
+        var CS = <?php echo $js_vars_json; ?>;
+
+        window.cs_cancelCoupon = function(couponId) {
+            var reason = prompt("Razón para anular el cupón:");
+            if (!reason) {
+                return;
+            }
+            if (!confirm("¿Seguro que deseas anular este cupón?")) {
+                return;
+            }
+
+            $.post(CS.ajaxurl, {
                 action: "cs_cancel_coupon",
                 coupon_id: couponId,
                 reason: reason,
-                nonce: "' . wp_create_nonce('cs_coupon_action') . '"
-            }).done(function(response) {
-                if (response.success) {
-                    alert("Cupón anulado exitosamente");
-                    location.reload();
-                } else {
-                    alert("Error: " + response.data.message);
+                nonce: CS.cancel_nonce
+            }, function(response){
+                try {
+                    if ( response && response.success ) {
+                        alert("Cupón anulado exitosamente");
+                        location.reload();
+                    } else {
+                        alert("Error: " + (response && response.data && response.data.message ? response.data.message : "Error desconocido"));
+                    }
+                } catch(e) {
+                    alert("Error en la respuesta del servidor.");
                 }
-            });
-        }
-    }
-    
-    function redeemCoupon(couponId) {
-        const amount = document.getElementById("redeem-amount") ? 
-            parseFloat(document.getElementById("redeem-amount").value) : null;
-            
-        if (confirm("¿Confirmar el canje de este cupón?")) {
-            jQuery.post(ajaxurl, {
+            }, 'json');
+        };
+
+        window.cs_redeemCoupon = function(couponId) {
+            var amountField = document.getElementById('cs-redeem-amount');
+            var amount = null;
+            if (amountField) {
+                amount = parseFloat(amountField.value);
+                if (isNaN(amount) || amount <= 0) {
+                    alert("Ingrese una cantidad válida.");
+                    return;
+                }
+            }
+
+            if (!confirm("¿Confirmar el canje de este cupón?")) {
+                return;
+            }
+
+            $.post(CS.ajaxurl, {
                 action: "cs_redeem_coupon",
-                secret_code: "' . $coupon->codigo_secreto . '",
+                secret_code: CS.secret_code,
                 amount: amount,
-                nonce: "' . wp_create_nonce('cs_coupon_redeem') . '"
-            }).done(function(response) {
-                if (response.success) {
-                    alert("Cupón canjeado exitosamente. Valor restante: " + response.data.remaining_value);
-                    location.reload();
-                } else {
-                    alert("Error: " + response.data.message);
+                nonce: CS.redeem_nonce
+            }, function(response){
+                try {
+                    if ( response && response.success ) {
+                        alert("Cupón canjeado exitosamente. Valor restante: " + (response.data && response.data.remaining_value ? response.data.remaining_value : '0'));
+                        location.reload();
+                    } else {
+                        alert("Error: " + (response && response.data && response.data.message ? response.data.message : "Error desconocido"));
+                    }
+                } catch(e) {
+                    alert("Error en la respuesta del servidor.");
                 }
-            });
-        }
-    }
-    </script>';
-}
+            }, 'json');
+        };
+    })(jQuery);
+    </script>
+    <?php
+} // fin function
+
 
 /**
  * Renderizar formulario de transferencia
@@ -827,63 +806,26 @@ function cs_emision_manual_page() {
 }
 
 /**
- * Mostrar mensajes de estado
+ * Mostrar mensajes de estado (en admin)
  */
 function cs_show_coupon_messages() {
-    $messages = [
-        'transferred' => 'Cupón transferido correctamente.',
-        'cancelled' => 'Cupón anulado correctamente.',
-        'redeemed' => 'Cupón canjeado correctamente.',
-        'error' => 'Ha ocurrido un error.'
-    ];
-    
-    foreach ($messages as $key => $message) {
-        if (isset($_GET[$key])) {
-            $type = $key === 'error' ? 'error' : 'success';
-            echo '<div class="notice notice-' . $type . ' is-dismissible">';
-            echo '<p>' . esc_html($message) . '</p>';
-            echo '</div>';
+    // Mensajes permitidos y su tipo (success|error)
+    $messages = array(
+        'transferred' => array( 'text' => 'Cupón transferido correctamente.', 'type' => 'success' ),
+        'cancelled'   => array( 'text' => 'Cupón anulado correctamente.',     'type' => 'success' ),
+        'redeemed'    => array( 'text' => 'Cupón canjeado correctamente.',     'type' => 'success' ),
+        'error'       => array( 'text' => 'Ha ocurrido un error.',            'type' => 'error' ),
+    );
+
+    foreach ( $messages as $key => $meta ) {
+        // Solo mostrar si el parámetro GET existe y es truthy
+        if ( isset( $_GET[ $key ] ) && $_GET[ $key ] !== '' ) {
+            $type = ( $meta['type'] === 'error' ) ? 'error' : 'success';
+            printf(
+                '<div class="notice notice-%1$s is-dismissible"><p>%2$s</p></div>',
+                esc_attr( $type ),
+                esc_html( $meta['text'] )
+            );
         }
     }
-}tipo === 'importe') {
-            echo '$' . number_format($coupon->valor_restante, 2) . ' / $' . number_format($coupon->valor, 2);
-        } else {
-            echo intval($coupon->valor_restante) . ' / ' . intval($coupon->valor) . ' ' . esc_html($coupon->unidad_descripcion ?: 'unidades');
-        }
-        echo '</td>';
-        
-        // Propietario
-        echo '<td>';
-        if ($coupon->propietario_nombre) {
-            echo esc_html($coupon->propietario_nombre);
-        } elseif ($coupon->propietario_email) {
-            echo esc_html($coupon->propietario_email);
-        } else {
-            echo '<em>Sin asignar</em>';
-        }
-        echo '</td>';
-        
-        // Estado
-        $status_color = cs_get_status_color($coupon->estado);
-        echo '<td><span style="color: ' . $status_color . '; font-weight: bold;">';
-        echo esc_html(cs_get_status_label($coupon->estado));
-        echo '</span></td>';
-        
-        // Vigencia
-        echo '<td>';
-        echo date_i18n('d/m/Y', strtotime($coupon->fecha_inicio)) . '<br>';
-        echo '<small>hasta ' . date_i18n('d/m/Y', strtotime($coupon->fecha_fin)) . '</small>';
-        echo '</td>';
-        
-        // Acciones
-        echo '<td>';
-        $actions = [];
-        
-        $actions[] = '<a href="' . admin_url('admin.php?page=cs_cupones&action=view&id=' . $coupon->id) . '">Ver</a>';
-        
-        if (in_array($coupon->estado, ['pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user'])) {
-            $actions[] = '<a href="' . admin_url('admin.php?page=cs_cupones&action=transfer&id=' . $coupon->id) . '">Transferir</a>';
-        }
-        
-        //if ($coupon->
-		
+}

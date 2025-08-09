@@ -20,9 +20,15 @@ require_once CS_PLUGIN_PATH . 'includes/database.php';
 
 // Activación
 register_activation_hook(__FILE__, 'cs_activate_plugin');
+
+// Actualizar función de activación
 function cs_activate_plugin() {
     cs_register_roles();
 	cs_tickets_create_tables();
+    cs_schedule_coupon_emission(); // Programar cron job
+    
+    // Flush rewrite rules si es necesario
+    flush_rewrite_rules();
 }
 
 add_action('init', function () {
