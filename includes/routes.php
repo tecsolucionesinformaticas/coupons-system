@@ -4,7 +4,7 @@ require_once CS_PLUGIN_PATH . 'includes/propuestas_handles.php';
 
 add_action('admin_init', 'cs_handle_admin_form_submits');
 
-// Router de páginas
+// Router principal
 function cs_handle_admin_form_submits() {
     $page = $_GET['page'] ?? '';
     $action = $_GET['action'] ?? '';
@@ -17,15 +17,10 @@ function cs_handle_admin_form_submits() {
         case 'cs_propuestas':
             cs_handle_propuestas_actions($action);
             break;
-
-        // Podés agregar más casos para otras secciones en el futuro:
-        // case 'cs_cupones':
-        //     cs_handle_cupones_actions($action);
-        //     break;
     }
 }
 
-// Router página comercios
+// Router página comercios (sin cambios)
 function cs_handle_comercios_actions($action) {
     switch ($action) {
         case 'create':
@@ -42,33 +37,38 @@ function cs_handle_comercios_actions($action) {
     }
 }
 
-// Router página propuestas
+// Router página propuestas mejorado
 function cs_handle_propuestas_actions($action) {
     switch ($action) {
         case 'create':
-            cs_propuestas_handle_create();
+            // Solo manejar si es POST
+            if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                cs_propuestas_handle_create();
+            }
             break;
 
         case 'delete':
-            cs_propuestas_handle_delete();
+            // Solo manejar si es GET con nonce válido
+            if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['_wpnonce'])) {
+                cs_propuestas_handle_delete();
+            }
             break;
 			
 		case 'approve':
-			cs_propuestas_handle_approve();
-			break;
-			
-		case 'list':
-            // Detectar si el formulario de bulk se envió por POST
-            if (
-                $_SERVER['REQUEST_METHOD'] === 'POST' &&
-                isset($_POST['cs_mass_action_nonce']) &&
-                wp_verify_nonce($_POST['cs_mass_action_nonce'], 'cs_mass_action') &&
-                current_user_can('manage_options') // o tu permiso adecuado
-            ) {
-                cs_propuestas_mass_action_handler();
+            // Solo manejar si es GET con nonce válido
+            if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['_wpnonce'])) {
+                cs_propuestas_handle_approve();
             }
-            break;
+			break;
+    }
+    
+    // Manejar acciones masivas POST independientemente de la acción GET
+    if (
+        $_SERVER['REQUEST_METHOD'] === 'POST' &&
+        isset($_POST['cs_mass_action_nonce']) &&
+        wp_verify_nonce($_POST['cs_mass_action_nonce'], 'cs_mass_action') &&
+        (isset($_POST['action']) || isset($_POST['action2']))
+    ) {
+        cs_propuestas_mass_action_handler();
     }
 }
-
-add_action('admin_post_cs_propuestas_mass_action', 'cs_propuestas_mass_action_handler');

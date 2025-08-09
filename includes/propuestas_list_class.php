@@ -4,6 +4,7 @@ require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php';
 class Proposals_List_Table extends WP_List_Table {
     
     private $table_name;
+	private $comercio_id = null;
     
     public function __construct() {
         global $wpdb;
@@ -16,32 +17,40 @@ class Proposals_List_Table extends WP_List_Table {
         ]);
     }
     
+	public function set_comercio_id($user_id) {
+		$this->comercio_id = intval($user_id);
+	}
+	
     // Configura las columnas
     public function get_columns() {
         return [
-            'cb'        => '<input type="checkbox" />',
-            'nombre'    => 'Nombre',
-            'descripcion' => 'Descripción',
-            'tipo_cupon' => 'Tipo de Cupón',
-            'valor'     => 'Valor',
+            'cb'           => '<input type="checkbox" />',
+            'nombre'       => 'Nombre',
+            'comercio'     => 'Comercio',
+            'descripcion'  => 'Descripción',
+            'tipo_cupon'   => 'Tipo',
+            'valor'        => 'Valor',
             'fecha_inicio' => 'Fecha Inicio',
-            'estado'    => 'Estado',
-            'actions'   => 'Acciones'
+            'estado'       => 'Estado',
+            'creado_por'   => 'Creado por',
+            'actions'      => 'Acciones'
         ];
     }
     
-    // Columnas que pueden ser ordenadas (ahora con múltiples columnas)
+    // Columnas ordenables
     public function get_sortable_columns() {
         return [
-            'nombre' => ['nombre', false],
-            'tipo_cupon' => ['tipo_cupon', false],
-            'valor' => ['valor', false],
+            'nombre'       => ['nombre', false],
+            'comercio'     => ['comercio_nombre', false],
+            'tipo_cupon'   => ['tipo_cupon', false],
+            'valor'        => ['valor', false],
             'fecha_inicio' => ['fecha_inicio', true],
-            'estado' => ['estado', false]
+            'estado'       => ['estado', false],
+            'creado_por'   => ['creado_por', false]
         ];
     }
     
-    // Datos para la tabla con mejor paginación
+    // Datos para la tabla con filtros mejorados
     public function prepare_items() {
         global $wpdb;
         
@@ -51,180 +60,340 @@ class Proposals_List_Table extends WP_List_Table {
         $sortable = $this->get_sortable_columns();
         $this->_column_headers = [$columns, $hidden, $sortable];
         
-        // Paginación mejorada
+        // Paginación
         $per_page = $this->get_items_per_page('proposals_per_page', 20);
         $current_page = $this->get_pagenum();
         $offset = ($current_page - 1) * $per_page;
         
-        // Ordenación múltiple
-        $orderby = 'id';
+        // Ordenación
+        $orderby = 'p.id';
         $order = 'DESC';
         
         if (isset($_GET['orderby'])) {
-            $orderby = sanitize_sql_orderby($_GET['orderby']);
-            $order = isset($_GET['order']) && strtoupper($_GET['order']) === 'ASC' ? 'ASC' : 'DESC';
+            $orderby_param = sanitize_text_field($_GET['orderby']);
+            $valid_orderby = [
+                'nombre' => 'p.nombre',
+                'comercio_nombre' => 'u.display_name',
+                'tipo_cupon' => 'p.tipo_cupon',
+                'valor' => 'p.valor',
+                'fecha_inicio' => 'p.fecha_inicio',
+                'estado' => 'p.estado',
+                'creado_por' => 'p.creado_por'
+            ];
+            
+            if (isset($valid_orderby[$orderby_param])) {
+                $orderby = $valid_orderby[$orderby_param];
+                $order = isset($_GET['order']) && strtoupper($_GET['order']) === 'ASC' ? 'ASC' : 'DESC';
+            }
         }
         
-        // Búsqueda mejorada
-        $where = '';
+        // Construir WHERE con múltiples filtros
+        $where_conditions = [];
+        $where_params = [];
+		
+		// Si el usuario tiene rol comercio (y no es admin), filtrar por su propio ID
+		$current_user = wp_get_current_user();
+		error_log("comercio_id: " . $this->comercio_id);
+		if ($this->comercio_id != null) {
+			$where_conditions[] = "p.comercio_id = %d";
+			$where_params[] = $this->comercio_id;
+		}
+        
+        // Búsqueda por texto
         if (isset($_REQUEST['s']) && !empty($_REQUEST['s'])) {
             $search = sanitize_text_field($_REQUEST['s']);
-            $where = $wpdb->prepare(" WHERE (nombre LIKE %s OR descripcion LIKE %s OR tipo_cupon LIKE %s)", 
-                                   "%{$search}%", "%{$search}%", "%{$search}%");
+            $where_conditions[] = "(p.nombre LIKE %s OR p.descripcion LIKE %s OR u.display_name LIKE %s)";
+            $where_params[] = "%{$search}%";
+            $where_params[] = "%{$search}%";
+            $where_params[] = "%{$search}%";
         }
         
         // Filtro por estado
-        if (isset($_REQUEST['estado_filter']) && !empty($_REQUEST['estado_filter'])) {
-            $estado = sanitize_text_field($_REQUEST['estado_filter']);
-            $where .= $where ? " AND estado = '{$estado}'" : " WHERE estado = '{$estado}'";
+        if (isset($_REQUEST['filtro_estado']) && !empty($_REQUEST['filtro_estado'])) {
+            $estado = sanitize_text_field($_REQUEST['filtro_estado']);
+            $where_conditions[] = "p.estado = %s";
+            $where_params[] = $estado;
         }
         
-        // Consulta principal optimizada
-        $total_items = $wpdb->get_var("SELECT COUNT(id) FROM {$this->table_name}{$where}");
+        // Filtro por tipo
+        if (isset($_REQUEST['filtro_tipo']) && !empty($_REQUEST['filtro_tipo'])) {
+            $tipo = sanitize_text_field($_REQUEST['filtro_tipo']);
+            $where_conditions[] = "p.tipo_cupon = %s";
+            $where_params[] = $tipo;
+        }
         
-        $this->items = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT * FROM {$this->table_name}{$where} ORDER BY {$orderby} {$order} LIMIT %d OFFSET %d",
-                $per_page,
-                $offset
-            ),
-            ARRAY_A
-        );
+        // Filtro por comercio
+        if (isset($_REQUEST['filtro_comercio']) && !empty($_REQUEST['filtro_comercio'])) {
+            $comercio_id = intval($_REQUEST['filtro_comercio']);
+            $where_conditions[] = "p.comercio_id = %d";
+            $where_params[] = $comercio_id;
+        }
         
-        // Configura la paginación mejorada
+        $where_sql = !empty($where_conditions) ? 'WHERE ' . implode(' AND ', $where_conditions) : '';
+        
+        // Base query con todos los JOIN primero, luego WHERE
+		$joins = "
+			LEFT JOIN {$wpdb->users} u ON p.comercio_id = u.ID
+			LEFT JOIN {$wpdb->users} creator ON p.creado_por = creator.ID
+		";
+
+		$base_query = "
+			FROM {$this->table_name} p
+			{$joins}
+			{$where_sql}
+		";
+        
+        // Contar total
+        $count_query = "SELECT COUNT(*) " . $base_query;
+        if (!empty($where_params)) {
+            $total_items = $wpdb->get_var($wpdb->prepare($count_query, $where_params));
+        } else {
+            $total_items = $wpdb->get_var($count_query);
+        }
+        
+        // Query principal
+        $main_query = "
+            SELECT p.*, u.display_name AS comercio_nombre, 
+                   creator.display_name AS creado_por_nombre
+            {$base_query}
+            ORDER BY {$orderby} {$order}
+            LIMIT %d OFFSET %d
+        ";
+        
+        $query_params = array_merge($where_params, [$per_page, $offset]);
+        
+        if (!empty($query_params)) {
+            $this->items = $wpdb->get_results($wpdb->prepare($main_query, $query_params), ARRAY_A);
+        } else {
+            $this->items = $wpdb->get_results($main_query . $wpdb->prepare(" LIMIT %d OFFSET %d", $per_page, $offset), ARRAY_A);
+        }
+        
+        // Configurar paginación
         $this->set_pagination_args([
             'total_items' => $total_items,
             'per_page'    => $per_page,
-            'total_pages' => ceil($total_items / $per_page),
-            'orderby'     => $orderby,
-            'order'       => $order
+            'total_pages' => ceil($total_items / $per_page)
         ]);
     }
     
-    // Render de columnas con mejor formato
+    // Render de columnas mejorado
     public function column_default($item, $column_name) {
         switch ($column_name) {
             case 'nombre':
-                return '<strong>' . esc_html($item[$column_name]) . '</strong>';
+                return '<strong>' . esc_html($item['nombre']) . '</strong>';
+            case 'comercio':
+                return esc_html($item['comercio_nombre'] ?: 'Sin comercio');
             case 'descripcion':
-                return esc_html(wp_trim_words($item[$column_name], 10));
+                return esc_html(wp_trim_words($item['descripcion'], 8));
             case 'tipo_cupon':
-                return ucfirst(esc_html($item[$column_name]));
+                return ucfirst(esc_html($item['tipo_cupon']));
             case 'valor':
-                return number_format($item[$column_name], 2);
+                if ($item['tipo_cupon'] === 'importe') {
+                    return '$' . number_format($item['valor'], 2);
+                } else {
+                    $desc = $item['unidad_descripcion'] ?: 'unidades';
+                    return intval($item['valor']) . ' ' . esc_html($desc);
+                }
             case 'fecha_inicio':
-                return date_i18n(get_option('date_format'), strtotime($item[$column_name]));
+                return date_i18n('d/m/Y', strtotime($item['fecha_inicio']));
             case 'estado':
-                $estado = $item[$column_name];
+                $estado = $item['estado'];
                 $class = '';
-                if ($estado === 'aprobado') $class = 'status-approved';
-                if ($estado === 'rechazado') $class = 'status-rejected';
-                return '<span class="' . $class . '">' . ucfirst(esc_html($estado)) . '</span>';
+                $texto = ucfirst($estado);
+                
+                if ($estado === 'aprobado') {
+                    $class = 'status-approved';
+                } elseif ($estado === 'rechazado') {
+                    $class = 'status-rejected';
+                } elseif ($estado === 'pendiente') {
+                    $class = 'status-pending';
+                    // Determinar quién debe aprobar
+                    $propuesta_obj = (object) $item;
+                    if (cs_propuesta_creada_por_admin($propuesta_obj)) {
+                        $texto = 'Pendiente (comercio)';
+                    } else {
+                        $texto = 'Pendiente (admin)';
+                    }
+                }
+                
+                return '<span class="' . $class . '">' . esc_html($texto) . '</span>';
+            case 'creado_por':
+                return esc_html($item['creado_por_nombre'] ?: 'Desconocido');
             default:
-                return esc_html(print_r($item, true));
+                return esc_html($item[$column_name] ?? '');
         }
     }
     
-    // Columna de acciones siempre visibles
+    // Columna de acciones corregida
     public function column_actions($item) {
-        $actions = [
-            'view' => sprintf(
-                '<a href="?page=%s&action=%s&propuesta=%s" class="button view">Ver</a>',
-                esc_attr($_REQUEST['page']),
-                'view',
-                absint($item['id'])
-            ),
-            'approve' => sprintf(
-                '<a href="?page=%s&action=%s&propuesta=%s" class="button approve">Aprobar</a>',
-                esc_attr($_REQUEST['page']),
-                'approve',
-                absint($item['id'])
-            ),
-            'delete' => sprintf(
-                '<a href="?page=%s&action=%s&propuesta=%s" class="button delete" onclick="return confirm(\'¿Estás seguro?\')">Eliminar</a>',
-                esc_attr($_REQUEST['page']),
-                'delete',
-                absint($item['id'])
-            )
-        ];
+        $propuesta_id = intval($item['id']);
+        $propuesta_obj = (object) $item;
         
-        // Mostramos siempre los botones (sin hover)
-        return '<div class="actions-container">' . 
-               implode(' ', $actions) . 
-               '</div>';
+        $actions = [];
+        
+        // Botón Ver (siempre disponible)
+        $actions['view'] = sprintf(
+            '<a href="%s" class="button button-small">Ver</a>',
+            esc_url(admin_url("admin.php?page=cs_propuestas&action=view&id={$propuesta_id}"))
+        );
+        
+        // Botón Aprobar (solo si está pendiente y el usuario puede aprobar)
+        if ($item['estado'] === 'pendiente' && cs_usuario_debe_aprobar_propuesta($propuesta_obj)) {
+            $actions['approve'] = sprintf(
+                '<a href="%s" class="button button-primary button-small" onclick="return confirm(\'¿Seguro que deseas aprobar esta propuesta?\')">Aprobar</a>',
+                esc_url(wp_nonce_url(
+                    admin_url("admin.php?page=cs_propuestas&action=approve&id={$propuesta_id}"),
+                    'cs_approve_propuesta_' . $propuesta_id
+                ))
+            );
+        }
+        
+        // Botón Eliminar (siempre disponible para admin)
+        if (current_user_can('manage_options')) {
+            $actions['delete'] = sprintf(
+                '<a href="%s" class="button button-small cs-delete-link" data-propuesta-id="%d" data-nombre="%s" data-comercio="%s">Eliminar</a>',
+                esc_url(wp_nonce_url(
+                    admin_url("admin.php?page=cs_propuestas&action=delete&id={$propuesta_id}"),
+                    'cs_delete_propuesta_' . $propuesta_id
+                )),
+                $propuesta_id,
+                esc_attr($item['nombre']),
+                esc_attr($item['comercio_nombre'])
+            );
+        }
+        
+        return '<div class="actions-container">' . implode(' ', $actions) . '</div>';
     }
     
-    // Columna checkbox para acciones masivas
+    // Columna checkbox
     public function column_cb($item) {
         return sprintf(
-            '<input type="checkbox" name="propuestas[]" value="%s" />',
+            '<input type="checkbox" name="cs_ids[]" value="%s" />',
             $item['id']
         );
     }
     
-    // Opciones para acciones masivas
+    // Acciones masivas
     public function get_bulk_actions() {
-        return [
-            'approve' => 'Aprobar seleccionados',
-            'delete' => 'Eliminar seleccionados'
-        ];
-    }
-    
-    // Filtros por estado con mejor estilo
-    public function extra_tablenav($which) {
-        if ($which === 'top') {
-            $estado = isset($_REQUEST['estado_filter']) ? $_REQUEST['estado_filter'] : '';
-            ?>
-            <div class="alignleft actions">
-                <label for="estado_filter" class="screen-reader-text">Filtrar por estado</label>
-                <select name="estado_filter" id="estado_filter" style="float:none;">
-                    <option value="">Todos los estados</option>
-                    <option value="pendiente" <?php selected($estado, 'pendiente'); ?>>Pendiente</option>
-                    <option value="aprobado" <?php selected($estado, 'aprobado'); ?>>Aprobado</option>
-                    <option value="rechazado" <?php selected($estado, 'rechazado'); ?>>Rechazado</option>
-                </select>
-                <?php submit_button('Filtrar', 'secondary', 'filter_action', false, ['style' => 'margin-left: 10px;']); ?>
-            </div>
-            <?php
-        }
-    }
-    
-    // Procesar acciones integrado con tus funciones
-    public function process_actions() {
-        // Acciones individuales
-        if (isset($_GET['action']) && isset($_GET['propuesta'])) {
-            $action = $_GET['action'];
-            $id = absint($_GET['propuesta']);
-            
-            try {
-                switch ($action) {
-                    case 'approve':
-                        cs_propuestas_handle_approve($id);
-                        break;
-                    case 'delete':
-                        cs_propuestas_handle_delete($id);
-                        break;
-                }
-            } catch (Exception $e) {
-                wp_die($e->getMessage());
-            }
-        }
+        $actions = [];
         
-        // Acciones masivas (usando tu handler)
-        if (isset($_POST['action']) || isset($_POST['action2'])) {
-            $action = isset($_POST['action']) && $_POST['action'] != -1 ? $_POST['action'] : $_POST['action2'];
-            
-            if (isset($_POST['propuestas']) && is_array($_POST['propuestas'])) {
-                check_admin_referer('bulk-' . $this->_args['plural']);
-                
-                // Preparamos los datos para tu handler
-                $_POST['cs_ids'] = $_POST['propuestas'];
-                $_POST['cs_mass_action_nonce'] = wp_create_nonce('cs_mass_action');
-                $_POST['action'] = $action;
-                
-                // Llamamos a tu handler
-                cs_propuestas_mass_action_handler();
-            }
-        }
+		$actions['approve'] = 'Aprobar seleccionadas';
+		$actions['delete'] = 'Eliminar seleccionadas';
+        
+        return $actions;
     }
+    
+    // Filtros mejorados que conservan los valores
+    public function extra_tablenav($which) {
+        if ($which !== 'top') return;
+        
+        $filtro_estado = $_GET['filtro_estado'] ?? '';
+        $filtro_tipo = $_GET['filtro_tipo'] ?? '';
+        $filtro_comercio = $_GET['filtro_comercio'] ?? '';
+        
+        $estados = [
+            '' => 'Todos los estados',
+            'pendiente' => 'Pendiente',
+            'aprobado' => 'Aprobado',
+            'rechazado' => 'Rechazado'
+        ];
+        
+        $tipos = [
+            '' => 'Todos los tipos',
+            'importe' => 'Importe',
+            'unidad' => 'Unidad'
+        ];
+        
+        // Obtener comercios
+        $comercios = get_users([
+            'role' => 'comercio',
+            'orderby' => 'display_name',
+            'order' => 'ASC'
+        ]);
+        
+        ?>
+        <div class="alignleft actions" style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+            <!-- Filtro Estado -->
+            <div>
+                <label for="filtro_estado" style="margin-right: 5px;">Estado:</label>
+                <select name="filtro_estado" id="filtro_estado">
+                    <?php foreach ($estados as $value => $label): ?>
+                        <option value="<?php echo esc_attr($value); ?>" <?php selected($filtro_estado, $value); ?>>
+                            <?php echo esc_html($label); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            
+            <!-- Filtro Tipo -->
+            <div>
+                <label for="filtro_tipo" style="margin-right: 5px;">Tipo:</label>
+                <select name="filtro_tipo" id="filtro_tipo">
+                    <?php foreach ($tipos as $value => $label): ?>
+                        <option value="<?php echo esc_attr($value); ?>" <?php selected($filtro_tipo, $value); ?>>
+                            <?php echo esc_html($label); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            
+            <!-- Filtro Comercio -->
+            <div>
+                <label for="filtro_comercio" style="margin-right: 5px;">Comercio:</label>
+                <select name="filtro_comercio" id="filtro_comercio">
+                    <option value="">Todos los comercios</option>
+                    <?php foreach ($comercios as $comercio): ?>
+                        <option value="<?php echo esc_attr($comercio->ID); ?>" <?php selected($filtro_comercio, $comercio->ID); ?>>
+                            <?php echo esc_html($comercio->display_name); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            
+            <!-- Botón Filtrar -->
+            <div>
+                <?php submit_button('Filtrar', 'secondary', 'filter_action', false); ?>
+                <?php if ($filtro_estado || $filtro_tipo || $filtro_comercio): ?>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=cs_propuestas')); ?>" class="button">Limpiar filtros</a>
+                <?php endif; ?>
+            </div>
+        </div>
+        
+        <!-- JavaScript para preservar filtros -->
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Agregar filtros actuales a todos los enlaces de paginación
+            const currentFilters = {
+                filtro_estado: '<?php echo esc_js($filtro_estado); ?>',
+                filtro_tipo: '<?php echo esc_js($filtro_tipo); ?>',
+                filtro_comercio: '<?php echo esc_js($filtro_comercio); ?>'
+            };
+            
+            // Actualizar enlaces de paginación
+            document.querySelectorAll('.tablenav-pages a').forEach(link => {
+                const url = new URL(link.href);
+                Object.entries(currentFilters).forEach(([key, value]) => {
+                    if (value) url.searchParams.set(key, value);
+                });
+                link.href = url.toString();
+            });
+            
+            // Confirmar eliminación individual
+            document.querySelectorAll('.cs-delete-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const nombre = this.dataset.nombre;
+                    const comercio = this.dataset.comercio;
+                    if (confirm(`¿Seguro que deseas eliminar la propuesta "${nombre}" del comercio "${comercio}"?\n\nEsta acción no se puede deshacer.`)) {
+                        window.location.href = this.href;
+                    }
+                });
+            });
+        });
+        </script>
+        <?php
+    }
+    
+    // NO implementamos process_actions aquí para evitar conflictos
+    // El routing se maneja en routes.php
 }

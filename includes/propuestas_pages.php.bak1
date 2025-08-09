@@ -2,233 +2,23 @@
 require_once CS_PLUGIN_PATH . 'includes/propuestas_list_class.php';
 
 function cs_propuestas_page() {
-    // Asegurarse que el usuario tenga permiso mínimo
-    if ( ! current_user_can('view_propuestas') ) {
-        wp_die('No tenés permisos para ver esta página.');
-    }
+    if ( ! current_user_can('manage_options') ) return;
 
     $action = $_GET['action'] ?? 'list';
 
     switch ($action) {
-		case 'add':
-			$user = wp_get_current_user();
-			$is_comercio = in_array('comercio', $user->roles);
-
-			if ( current_user_can('manage_options') || $is_comercio ) {
-				cs_propuestas_render_form_add();
-			} else {
-				wp_die('No tenés permisos para agregar propuestas.');
-			}
+        case 'add':
+            cs_propuestas_render_form_add();
+            break;
+		case 'view':
+			cs_propuestas_render_view();
 			break;
-        case 'view':
-            cs_propuestas_render_view(); // Debería verificar internamente si el usuario puede ver esa propuesta
-            break;
-
         default:
-            cs_propuestas_render_list(); // Acá hacemos la distinción por tipo de usuario
+            cs_propuestas_render_list();
             break;
     }
 }
 
-function cs_propuestas_render_list() {
-    echo '<div class="wrap">';
-    echo '<h1 class="wp-heading-inline">Propuestas de Cupones</h1>';
-    
-    // Botón para agregar nueva propuesta
-    echo '<a href="' . admin_url('admin.php?page=cs_propuestas&action=add') . '" class="page-title-action">Agregar Nueva</a>';
-    echo '<hr class="wp-header-end">';
-    
-    // Mostrar mensajes de estado mejorados
-    cs_show_admin_messages();
-    
-    // Crear y preparar la tabla
-    $proposals_table = new Proposals_List_Table();
-    
-	// Filtra/limita a un solo comercio en el caso de que el usuario sea un comerciante.
-	if ( in_array('comercio', wp_get_current_user()->roles) ) {
-		$proposals_table->set_comercio_id(get_current_user_id());
-	}
-	
-    // Formulario único que maneja tanto filtros como acciones masivas
-    echo '<form method="post" id="propuestas-filter">';
-    
-    // Campos ocultos necesarios
-    echo '<input type="hidden" name="page" value="cs_propuestas">';
-    wp_nonce_field('cs_mass_action', 'cs_mass_action_nonce');
-    
-    // Preservar filtros actuales como campos ocultos
-    $current_filters = ['filtro_estado', 'filtro_tipo', 'filtro_comercio', 's'];
-    foreach ($current_filters as $filter) {
-        if (!empty($_GET[$filter])) {
-            echo '<input type="hidden" name="' . esc_attr($filter) . '" value="' . esc_attr($_GET[$filter]) . '">';
-        }
-    }
-    
-    // Caja de búsqueda
-    $proposals_table->search_box('Buscar propuestas', 'search_id');
-    
-    // Preparar y mostrar la tabla
-    $proposals_table->prepare_items();
-    $proposals_table->display();
-    
-    echo '</form>';
-    echo '</div>';
-    
-    // Estilos CSS
-    echo '<style>
-        .actions-container { 
-            display: flex; 
-            gap: 5px; 
-            flex-wrap: wrap;
-        }
-        .actions-container .button { 
-            margin: 0;
-            font-size: 11px;
-            line-height: 1.2;
-            padding: 3px 6px;
-        }
-        .status-approved { 
-            color: #46b450; 
-            font-weight: bold; 
-        }
-        .status-rejected { 
-            color: #dc3232; 
-            font-weight: bold; 
-        }
-        .status-pending { 
-            color: #f56e28; 
-            font-weight: bold; 
-        }
-        .column-actions {
-            width: 120px;
-        }
-        .tablenav .actions {
-            overflow: visible;
-        }
-    </style>';
-    
-    // JavaScript para mejorar la UX
-    echo '<script>
-    document.addEventListener("DOMContentLoaded", function() {
-        // Variable para prevenir doble confirmación
-        let confirmationShown = false;
-        
-        // Manejar acciones masivas con confirmación
-        const form = document.getElementById("propuestas-filter");
-        const applyButtons = document.querySelectorAll("#doaction, #doaction2");
-        
-        // Interceptar el submit del formulario en lugar de los clicks individuales
-        form.addEventListener("submit", function(e) {
-            // Verificar si el submit viene de una acción masiva
-            const submitter = e.submitter;
-            if (!submitter || !submitter.matches("#doaction, #doaction2")) {
-                return; // No es una acción masiva, permitir submit normal
-            }
-            
-            // Prevenir doble confirmación
-            if (confirmationShown) {
-                return;
-            }
-            
-            const actionSelect = submitter.id === "doaction" ? 
-                document.querySelector("select[name=\"action\"]") : 
-                document.querySelector("select[name=\"action2\"]");
-                
-            const selectedAction = actionSelect.value;
-            
-            if (selectedAction === "-1" || !selectedAction) {
-                e.preventDefault();
-                alert("Por favor selecciona una acción.");
-                return;
-            }
-            
-            const checkedBoxes = document.querySelectorAll("tbody input[type=\"checkbox\"]:checked");
-            if (checkedBoxes.length === 0) {
-                e.preventDefault();
-                alert("Por favor selecciona al menos una propuesta.");
-                return;
-            }
-            
-            let message = "";
-            if (selectedAction === "approve") {
-                message = `¿Seguro que deseas aprobar ${checkedBoxes.length} propuesta(s) seleccionada(s)?`;
-            } else if (selectedAction === "delete") {
-                message = `¿Seguro que deseas eliminar ${checkedBoxes.length} propuesta(s) seleccionada(s)?\n\nEsta acción no se puede deshacer.`;
-            }
-            
-            if (message) {
-                confirmationShown = true;
-                const confirmed = confirm(message);
-                if (!confirmed) {
-                    e.preventDefault();
-                    confirmationShown = false; // Reset si se cancela
-                }
-                // Si se confirma, el form se envía normalmente
-            }
-        });
-        
-        // Mejorar select all checkbox
-        const masterCheckbox = document.querySelector("thead .check-column input[type=\"checkbox\"]");
-        const rowCheckboxes = document.querySelectorAll("tbody .check-column input[type=\"checkbox\"]");
-        
-        if (masterCheckbox) {
-            masterCheckbox.addEventListener("change", function() {
-                rowCheckboxes.forEach(checkbox => {
-                    checkbox.checked = masterCheckbox.checked;
-                });
-            });
-            
-            // Actualizar master checkbox cuando cambian los individuales
-            rowCheckboxes.forEach(checkbox => {
-                checkbox.addEventListener("change", function() {
-                    const checkedCount = Array.from(rowCheckboxes).filter(cb => cb.checked).length;
-                    masterCheckbox.indeterminate = checkedCount > 0 && checkedCount < rowCheckboxes.length;
-                    masterCheckbox.checked = checkedCount === rowCheckboxes.length;
-                });
-            });
-        }
-    });
-    </script>';
-}
-
-function cs_show_admin_messages() {
-    $messages = [
-        'created' => ['success', 'Propuesta creada correctamente.'],
-        'approved' => ['success', 'Propuesta aprobada correctamente.'],
-        'deleted' => ['success', 'Propuesta eliminada correctamente.'],
-        'mass_approved' => ['success', function($count) { return "$count propuesta(s) aprobada(s) correctamente."; }],
-        'mass_deleted' => ['success', function($count) { return "$count propuesta(s) eliminada(s) correctamente."; }],
-        'mass_errors' => ['error', function($errors) { return "Errores durante la operación: " . esc_html(urldecode($errors)); }],
-        'error' => ['error', 'Ha ocurrido un error.'],
-        'invalid_id' => ['error', 'ID de propuesta inválido.'],
-        'not_found' => ['error', 'Propuesta no encontrada.'],
-        'already_processed' => ['error', 'La propuesta ya fue procesada anteriormente.'],
-        'no_permission' => ['error', 'No tienes permisos para realizar esta acción.'],
-        'db_update_failed' => ['error', 'Error al actualizar la base de datos.'],
-        'invalid_nonce' => ['error', 'Token de seguridad inválido.'],
-        'no_ids' => ['error', 'No se seleccionaron elementos para procesar.'],
-        'invalid_action' => ['error', 'Acción inválida.']
-    ];
-    
-    foreach ($messages as $key => $config) {
-        if (isset($_GET[$key])) {
-            $type = $config[0];
-            $message_callback = $config[1];
-            
-            if (is_callable($message_callback)) {
-                $message = $message_callback($_GET[$key]);
-            } else {
-                $message = $message_callback;
-            }
-            
-            echo '<div class="notice notice-' . esc_attr($type) . ' is-dismissible">';
-            echo '<p>' . wp_kses_post($message) . '</p>';
-            echo '</div>';
-        }
-    }
-}
-
-// Resto de funciones sin cambios
 function cs_propuestas_render_form_add() {
     global $wpdb;
 
@@ -263,20 +53,10 @@ function cs_propuestas_render_form_add() {
     echo '<td><textarea name="descripcion" id="descripcion" rows="4" class="large-text">' . esc_textarea($old['descripcion'] ?? '') . '</textarea></td></tr>';
 
     // Comercio
-	$user = wp_get_current_user();
-	$is_comercio = in_array('comercio', $user->roles);
-
-	if (!$is_comercio) {
-		echo '<tr><th><label for="comercio_id">Comercio</label></th><td><select name="comercio_id" required>';
-		foreach ($comercios as $c) {
-			$selected = (isset($old['comercio_id']) && $old['comercio_id'] == $c->ID) ? 'selected' : '';
-			echo '<option value="' . esc_attr($c->ID) . '" ' . $selected . '>' . esc_html($c->display_name) . '</option>';
-		}
-		echo '</select></td></tr>';
-	} else {
-		// Para comercio, puedes mostrar el nombre pero no enviar el input
-		echo '<tr><th>Comercio</th><td id="comercio_nombre">' . esc_html($user->display_name) . '</td></tr>';
-		echo '<input type="hidden" name="comercio_id" value="' . esc_attr($user->ID) . '">';
+    echo '<tr><th><label for="comercio_id">Comercio</label></th><td><select name="comercio_id" required>';
+    foreach ($comercios as $c) {
+		$selected = (isset($old['comercio_id']) && $old['comercio_id'] == $c->ID) ? 'selected' : '';
+		echo '<option value="' . esc_attr($c->ID) . '" ' . $selected . '>' . esc_html($c->display_name) . '</option>';
 	}
 
     // Tipo de cupón
@@ -297,6 +77,8 @@ function cs_propuestas_render_form_add() {
 	echo '<input type="number" name="valor" id="valor" step="0.01" min="0.01" value="' . esc_attr($old['valor'] ?? 1) . '" required>';
 	echo '<span id="valor-suffix" style="margin-left:4px; display:none;">unidades</span>';
 	echo '</div></td></tr>';
+
+
 
     // Uso parcial
     echo '<tr><th><label for="uso_parcial">¿Permite uso parcial?</label></th>';
@@ -351,8 +133,6 @@ function cs_propuestas_render_form_add() {
 	unset($_SESSION['cs_errores'], $_SESSION['cs_old_input']);
 	
     echo '</div>';
-	
-	// JavaScript para el formulario (sin cambios)
 	echo '
 	<script>
 	document.getElementById("preview-button").addEventListener("click", function(e) {
@@ -360,17 +140,7 @@ function cs_propuestas_render_form_add() {
 
 		const nombre = document.getElementById("nombre").value;
 		const descripcion = document.getElementById("descripcion").value;
-
-		let comercio;
-		const select = document.getElementById("comercio_id");
-
-		if (select) {
-		  comercio = select.selectedOptions[0].text;
-		} else {
-		  const comercioNombre = document.getElementById("comercio_nombre");
-		  comercio = comercioNombre ? comercioNombre.textContent.trim() : "";
-		}
-
+		const comercio = document.querySelector("select[name=\'comercio_id\']").selectedOptions[0].text;
 		const tipo = document.getElementById("tipo_cupon").value;
 		const valor = document.getElementById("valor").value;
 		const uso_parcial = document.getElementById("uso_parcial").checked ? "Sí" : "No";
@@ -508,6 +278,7 @@ function cs_propuestas_render_form_add() {
 	}
 	</script>
 	';
+
 }
 
 function cs_propuestas_render_view() {
@@ -615,10 +386,8 @@ function cs_propuestas_render_view() {
 	echo '<p style="margin-top: 20px;">';
 
 	if ($propuesta->estado === 'pendiente' && cs_usuario_debe_aprobar_propuesta($propuesta)) {
-		echo '<a href="' . esc_url(wp_nonce_url(
-			admin_url('admin.php?page=cs_propuestas&action=approve&id=' . intval($id)),
-			'cs_approve_propuesta_' . intval($id)
-		)) . '" class="button button-primary" onclick="return confirm(\'¿Seguro que quieres aprobar esta propuesta?\');">Aprobar propuesta</a> ';
+		$approve_url = admin_url('admin.php?page=cs_propuestas&action=approve&id=' . intval($propuesta->id));
+		echo '<a href="' . admin_url('admin.php?page=cs_propuestas&action=approve&id=' . intval($id)) . '" class="button button-primary" onclick="return confirm(\'¿Seguro que quieres aprobar esta propuesta?\');">Aprobar propuesta</a>';
 	}
 
 	echo '<a href="' . admin_url('admin.php?page=cs_propuestas') . '" class="button">Volver al listado</a>';
@@ -626,3 +395,53 @@ function cs_propuestas_render_view() {
 
 	echo '</div>';
 }
+
+function cs_propuestas_render_list() {
+    $proposals_table = new Proposals_List_Table();
+    $proposals_table->process_actions();
+    
+    echo '<div class="wrap">';
+    echo '<h1 class="wp-heading-inline">Propuestas de Cupones</h1>';
+    
+    // Botón para agregar nuevo registro
+    echo '<a href="' . admin_url('admin.php?page=cs_propuestas_add') . '" class="page-title-action">Agregar Nueva</a>';
+    echo '<hr class="wp-header-end">';
+    
+    // Mostrar mensajes de estado
+    if (isset($_GET['approved'])) {
+        echo '<div class="notice notice-success"><p>Propuesta aprobada correctamente.</p></div>';
+    }
+    if (isset($_GET['deleted'])) {
+        echo '<div class="notice notice-success"><p>Propuesta eliminada correctamente.</p></div>';
+    }
+    if (isset($_GET['mass_approved'])) {
+        echo '<div class="notice notice-success"><p>' . intval($_GET['mass_approved']) . ' propuestas aprobadas correctamente.</p></div>';
+    }
+    if (isset($_GET['mass_deleted'])) {
+        echo '<div class="notice notice-success"><p>' . intval($_GET['mass_deleted']) . ' propuestas eliminadas correctamente.</p></div>';
+    }
+    if (isset($_GET['mass_errors'])) {
+        echo '<div class="notice notice-error"><p>Errores: ' . esc_html(urldecode($_GET['mass_errors'])) . '</p></div>';
+    }
+    
+    // Formulario de búsqueda
+    $proposals_table->search_box('Buscar propuestas', 'search_id');
+    
+    // Mostrar la tabla
+    echo '<form method="post" id="propuestas-filter">';
+    $proposals_table->prepare_items();
+    $proposals_table->display();
+    echo '</form>';
+    
+    echo '</div>';
+    
+    // Estilos para los botones de acción
+    echo '<style>
+        .actions-container { display: flex; gap: 5px; }
+        .actions-container .button { display: inline-block; margin: 0; }
+        .status-approved { color: #46b450; font-weight: bold; }
+        .status-rejected { color: #dc3232; font-weight: bold; }
+    </style>';
+}
+
+
