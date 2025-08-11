@@ -216,63 +216,152 @@ function cs_render_coupon_filters($current_filters) {
  * Renderizar tabla de cupones
  */
 function cs_render_coupons_table($coupons) {
-    if (empty($coupons)) {
-        echo '<p>No se encontraron cupones con los filtros aplicados.</p>';
+    if ( empty( $coupons ) ) {
+        echo '<p>' . esc_html__( 'No se encontraron cupones con los filtros aplicados.', 'cs' ) . '</p>';
         return;
     }
-    
+
+    // URL y nonce para acciones en lote (por si las usás más adelante)
+    $bulk_nonce = wp_create_nonce( 'cs_bulk_action' );
+
+    echo '<form id="cs-coupons-form" method="post">';
+    echo '<input type="hidden" name="cs_bulk_nonce" value="' . esc_attr( $bulk_nonce ) . '">';
+
     echo '<div class="tablenav top">';
-    echo '<div class="alignleft actions">';
-    echo '<select id="bulk-action-selector-top">';
-    echo '<option value="-1">Acciones en lote</option>';
-    echo '<option value="transfer">Transferir seleccionados</option>';
-    echo '<option value="cancel">Anular seleccionados</option>';
-    echo '</select>';
-    echo '<input type="submit" class="button action" value="Aplicar" id="doaction">';
+    echo '  <div class="alignleft actions">';
+    echo '    <select id="bulk-action-selector-top" name="action">';
+    echo '      <option value="-1">' . esc_html__( 'Acciones en lote', 'cs' ) . '</option>';
+    echo '      <option value="transfer">' . esc_html__( 'Transferir seleccionados', 'cs' ) . '</option>';
+    echo '      <option value="cancel">' . esc_html__( 'Anular seleccionados', 'cs' ) . '</option>';
+    echo '    </select>';
+    echo '    <input type="button" class="button action" value="' . esc_attr__( 'Aplicar', 'cs' ) . '" id="doaction">';
+    echo '  </div>';
     echo '</div>';
-    echo '</div>';
-    
+
     echo '<table class="wp-list-table widefat fixed striped">';
     echo '<thead>';
     echo '<tr>';
-    echo '<td class="check-column"><input type="checkbox" id="cb-select-all-1"></td>';
-    echo '<th>Código</th>';
-    echo '<th>Comercio</th>';
-    echo '<th>Propuesta</th>';
-    echo '<th>Tipo/Valor</th>';
-    echo '<th>Propietario</th>';
-    echo '<th>Estado</th>';
-    echo '<th>Vigencia</th>';
-    echo '<th>Acciones</th>';
+    echo '  <td class="check-column"><input type="checkbox" id="cb-select-all-1" /></td>';
+    echo '  <th>' . esc_html__( 'Código', 'cs' ) . '</th>';
+    echo '  <th>' . esc_html__( 'Comercio', 'cs' ) . '</th>';
+    echo '  <th>' . esc_html__( 'Tipo / Valor', 'cs' ) . '</th>';
+    echo '  <th>' . esc_html__( 'Propietario', 'cs' ) . '</th>';
+    echo '  <th>' . esc_html__( 'Estado', 'cs' ) . '</th>';
+    echo '  <th>' . esc_html__( 'Vigencia', 'cs' ) . '</th>';
+    echo '  <th>' . esc_html__( 'Acciones', 'cs' ) . '</th>';
     echo '</tr>';
     echo '</thead>';
     echo '<tbody>';
-    
-    foreach ($coupons as $coupon) {
-        echo '<tr>';
-        echo '<th scope="row" class="check-column">';
-        echo '<input type="checkbox" name="coupon[]" value="' . $coupon->id . '">';
-        echo '</th>';
-        
-        // Código
-        echo '<td><strong>' . esc_html($coupon->codigo_serie) . '</strong><br>';
-        echo '<small>ID: ' . $coupon->id . '</small></td>';
-        
-        // Comercio
-        echo '<td>' . esc_html($coupon->comercio_nombre ?: 'Sin nombre') . '</td>';
-        
-        // Propuesta
-        echo '<td>' . esc_html($coupon->propuesta_nombre ?: 'N/A') . '</td>';
-        
-        // Tipo/Valor
-        echo '<td>';
-        if ($coupon->estado !== 'anulado' && $coupon->estado !== 'completado') {
-            $actions[] = '<a href="#" onclick="cancelCoupon(' . $coupon->id . '); return false;" style="color: #dc3232;">Anular</a>';
+
+    foreach ( $coupons as $coupon ) {
+        // Aseguramos tipos y valores por si vienen nulos
+        $coupon_id      = isset( $coupon->id ) ? intval( $coupon->id ) : 0;
+        $codigo_serie   = isset( $coupon->codigo_serie ) ? $coupon->codigo_serie : '';
+        $comercio_name  = ! empty( $coupon->comercio_nombre ) ? $coupon->comercio_nombre : '';
+        $propuesta_name = ! empty( $coupon->propuesta_nombre ) ? $coupon->propuesta_nombre : '';
+        $propuesta_desc = ! empty( $coupon->propuesta_descripcion ) ? $coupon->propuesta_descripcion : '';
+        $tipo           = isset( $coupon->tipo ) ? $coupon->tipo : '';
+        $valor          = isset( $coupon->valor ) ? floatval( $coupon->valor ) : 0;
+        $valor_restante = isset( $coupon->valor_restante ) ? floatval( $coupon->valor_restante ) : 0;
+        $unidad_desc    = ! empty( $coupon->unidad_descripcion ) ? $coupon->unidad_descripcion : 'unidades';
+        $propietario    = '';
+        $estado         = isset( $coupon->estado ) ? $coupon->estado : '';
+        $fecha_inicio   = ! empty( $coupon->fecha_inicio ) ? $coupon->fecha_inicio : '';
+        $fecha_fin      = ! empty( $coupon->fecha_fin ) ? $coupon->fecha_fin : '';
+
+        // Determinar propietario: nombre -> email -> user_id (si existe)
+        if ( ! empty( $coupon->propietario_nombre ) ) {
+            $propietario = $coupon->propietario_nombre;
+            if ( ! empty( $coupon->propietario_email ) ) {
+                $propietario .= ' (' . $coupon->propietario_email . ')';
+            }
+        } elseif ( ! empty( $coupon->propietario_email ) ) {
+            $propietario = $coupon->propietario_email;
+        } elseif ( ! empty( $coupon->propietario_user_id ) ) {
+            $user = get_userdata( intval( $coupon->propietario_user_id ) );
+            if ( $user ) {
+                $propietario = $user->display_name . ' (' . $user->user_email . ')';
+            }
         }
-        
-        echo implode(' | ', $actions);
-        echo '</td>';
-        
+
+        if ( empty( $propietario ) ) {
+            $propietario = '<em>' . esc_html__( 'Sin asignar', 'cs' ) . '</em>';
+        } else {
+            $propietario = esc_html( $propietario );
+        }
+
+        // Estado / color
+        $status_label = function_exists( 'cs_get_status_label' ) ? cs_get_status_label( $estado ) : $estado;
+        $status_color = function_exists( 'cs_get_status_color' ) ? cs_get_status_color( $estado ) : '#000';
+
+        // Preparar acciones por fila (se reinicia en cada iteración)
+        $actions = array();
+
+        // Ver
+        $actions[] = '<a href="' . esc_url( admin_url( 'admin.php?page=cs_cupones&action=view&id=' . $coupon_id ) ) . '">' . esc_html__( 'Ver', 'cs' ) . '</a>';
+
+        // Transferir (según estados permitidos)
+        if ( in_array( $estado, array( 'pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user' ), true ) ) {
+            $actions[] = '<a href="' . esc_url( admin_url( 'admin.php?page=cs_cupones&action=transfer&id=' . $coupon_id ) ) . '">' . esc_html__( 'Transferir', 'cs' ) . '</a>';
+        }
+
+        // Anular (si no está anulado/completado)
+        if ( 'anulado' !== $estado && 'completado' !== $estado ) {
+            // inline onclick as before (usa la función JS global cancelCoupon)
+            $actions[] = '<a href="#" onclick="cancelCoupon(' . esc_attr( $coupon_id ) . '); return false;" style="color:#dc3232;">' . esc_html__( 'Anular', 'cs' ) . '</a>';
+        }
+
+        // Construir campo Tipo/Valor
+        if ( $tipo === 'importe' ) {
+            $valor_str        = '$' . number_format( $valor, 2 );
+            $valor_rest_str   = '$' . number_format( $valor_restante, 2 );
+            $tipo_valor_html  = esc_html__( 'Importe', 'cs' ) . '<br><strong>' . esc_html( $valor_str ) . '</strong><br><small>' . esc_html__( 'Restante:', 'cs' ) . ' ' . esc_html( $valor_rest_str ) . '</small>';
+        } else {
+            // unidad
+            $tipo_valor_html = esc_html( ucfirst( $tipo ) ) . '<br><strong>' . esc_html( intval( $valor ) . ' ' . $unidad_desc ) . '</strong><br><small>' . esc_html( 'Restante:' ) . ' ' . esc_html( intval( $valor_restante ) . ' / ' . intval( $valor ) . ' ' . $unidad_desc ) . '</small>';
+        }
+
+        // Vigencia: mostrar fecha inicio y fin (formateadas)
+        $vigencia_html = '';
+        if ( ! empty( $fecha_inicio ) ) {
+            $vigencia_html .= esc_html( date_i18n( 'd/m/Y', strtotime( $fecha_inicio ) ) );
+        } else {
+            $vigencia_html .= '-';
+        }
+        $vigencia_html .= '<br><small>' . esc_html__( 'hasta', 'cs' ) . ' ';
+        if ( ! empty( $fecha_fin ) ) {
+            $vigencia_html .= esc_html( date_i18n( 'd/m/Y', strtotime( $fecha_fin ) ) );
+        } else {
+            $vigencia_html .= '-';
+        }
+        $vigencia_html .= '</small>';
+
+        // Imprimir fila
+        echo '<tr>';
+        // checkbox
+        echo '<th scope="row" class="check-column"><input type="checkbox" name="coupon[]" value="' . esc_attr( $coupon_id ) . '"></th>';
+
+        // Código
+        echo '<td><strong>' . esc_html( $codigo_serie ) . '</strong><br><small>' . esc_html__( 'ID:', 'cs' ) . ' ' . esc_html( $coupon_id ) . '</small></td>';
+
+        // Comercio
+        echo '<td>' . esc_html( $comercio_name ?: esc_html__( 'Sin nombre', 'cs' ) ) . '</td>';
+
+        // Tipo/Valor
+        echo '<td>' . $tipo_valor_html . '</td>';
+
+        // Propietario
+        echo '<td>' . $propietario . '</td>';
+
+        // Estado
+        echo '<td><span style="color:' . esc_attr( $status_color ) . '; font-weight:bold;">' . esc_html( $status_label ) . '</span></td>';
+
+        // Vigencia
+        echo '<td>' . $vigencia_html . '</td>';
+
+        // Acciones
+        echo '<td>' . implode( ' | ', $actions ) . '</td>';
+
         echo '</tr>';
     }
     
