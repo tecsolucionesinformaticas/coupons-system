@@ -249,7 +249,7 @@ class Proposals_List_Table extends WP_List_Table {
         }
         
         // Botón Eliminar (siempre disponible para admin)
-        if (current_user_can('manage_options')) {
+        if (current_user_can('manage_options') && $item['estado'] === 'pendiente') {
             $actions['delete'] = sprintf(
                 '<a href="%s" class="button button-small cs-delete-link" data-propuesta-id="%d" data-nombre="%s" data-comercio="%s">Eliminar</a>',
                 esc_url(wp_nonce_url(

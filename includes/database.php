@@ -44,7 +44,6 @@ function cs_tickets_create_tables() {
         fecha_fin DATE NOT NULL,
         permite_uso_parcial BOOLEAN NOT NULL DEFAULT 0,
         estado ENUM(
-            'pendiente_comercio',
             'asignado_admin',
             'asignado_email',
             'asignado_user',
@@ -53,7 +52,7 @@ function cs_tickets_create_tables() {
             'completado',
             'anulado',
             'vencido'
-        ) DEFAULT 'pendiente_comercio',
+        ) DEFAULT 'asignado_admin',
         propietario_email VARCHAR(255) DEFAULT NULL,
         propietario_user_id BIGINT UNSIGNED DEFAULT NULL,
         codigo_serie CHAR(7) NOT NULL UNIQUE,

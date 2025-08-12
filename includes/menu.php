@@ -48,15 +48,24 @@ function cs_register_admin_menu() {
 		'cs_propuestas_page'
 	);
     
-    add_submenu_page(
-        'cs_dashboard',
-        'Cupones',
-        'Cupones',
-        'manage_options',
-        'cs_cupones',
-        'cs_cupones_page'
-    );	
-    
+	add_submenu_page(
+		'cs_dashboard',
+		'Cupones',
+		'Cupones',
+		'read',
+		'cs_cupones',
+		'cs_cupones_page'
+	);	
+	
+	// 2. Ocultar menú para comercio (aunque tienen permiso)
+	// Ocultar el menú para rol comercio con CSS
+	add_action('admin_head', function() {
+		if (current_user_can('comercio_role') && !current_user_can('manage_options')) {
+			echo '<style>#toplevel_page_cs_dashboard ul.wp-submenu li a[href="admin.php?page=cs_cupones"] { display: none !important; }</style>';
+			echo '<style>#toplevel_page_cs_dashboard { display: none !important; }</style>';
+		}
+	});
+	
     add_submenu_page(
         'cs_dashboard',
         'Emisión Manual',
@@ -66,18 +75,28 @@ function cs_register_admin_menu() {
         'cs_emision_manual_page'
     );
     
-    // Submenú para comercios (solo ven sus cupones)
-    if (current_user_can('comercio_role')) {
-        add_menu_page(
-            'Mis Cupones',
-            'Mis Cupones',
-            'read',
-            'cs_mis_cupones',
-            'cs_comercio_cupones_page',
-            'dashicons-tickets',
-            30
-        );
-    }
+	// Submenú para comercios (solo ven sus cupones)
+	if ( current_user_can('comercio_role') ) {
+		add_menu_page(
+			'Mis Cupones',
+			'Mis Cupones',
+			'read',
+			'cs_mis_cupones',
+			'cs_comercio_cupones_page',
+			'dashicons-tickets',
+			30
+		);
+
+		// Agregar submenú para Propuestas (para que pueda aceptar propuestas de emisión)
+		add_submenu_page(
+			'cs_mis_cupones',              // slug del menú padre
+			'Propuestas',
+			'Propuestas',
+			'read',                        // permiso mínimo
+			'cs_propuestas',
+			'cs_propuestas_page'
+		);
+	}
 }
 add_action('admin_menu', 'cs_register_admin_menu');
 
@@ -215,6 +234,13 @@ function cs_comercio_cupones_page() {
     if (!empty($_GET['s'])) {
         $filters['search'] = sanitize_text_field($_GET['s']);
     }
+
+    if (!empty($_GET['rol'])) {
+        $rol = sanitize_text_field($_GET['rol']);
+        if (in_array($rol, ['propietario', 'emisor'], true)) {
+            $filters['rol'] = $rol;
+        }
+    }
     
     $coupons = $manager->get_coupons_for_user($current_user_id, $filters);
     $stats = $manager->get_coupon_stats($current_user_id);
@@ -238,12 +264,12 @@ function cs_comercio_cupones_page() {
     echo '<select name="estado" id="estado">';
     echo '<option value="">Todos</option>';
     $estados_comercio = [
-        'pendiente_comercio' => 'Pendientes',
-        'asignado_admin' => 'Asignados por Admin',
-        'asignado_email' => 'Asignados por Email',
-        'asignado_user' => 'Asignados a Usuario',
+        'asignado_admin' => 'Asignado al Administrador',
+        'asignado_cliente' => 'Asignado al Cliente',
         'parcial' => 'Parcialmente Usados',
-        'completado' => 'Completados'
+        'completado' => 'Completados',
+		'anulado' => 'Anulado',
+		'vencido' => 'Vencido'
     ];
     foreach ($estados_comercio as $value => $label) {
         $selected = selected($filters['estado'] ?? '', $value, false);
@@ -252,6 +278,16 @@ function cs_comercio_cupones_page() {
     echo '</select>';
     echo '</div>';
     
+	echo '<div>';
+	echo '<label for="rol">Rol:</label><br>';
+	echo '<select name="rol" id="rol">';
+	echo '<option value="">Todos</option>';
+	echo '<option value="propietario"' . selected($filters['rol'] ?? '', 'propietario', false) . '>Propietario</option>';
+	echo '<option value="emisor"' . selected($filters['rol'] ?? '', 'emisor', false) . '>Emisor</option>';
+	echo '</select>';
+	echo '</div>';
+
+	
     echo '<div>';
     echo '<label for="s">Buscar:</label><br>';
     echo '<input type="text" name="s" id="s" placeholder="Código o propuesta..." value="' . esc_attr($filters['search'] ?? '') . '">';
@@ -286,11 +322,11 @@ function cs_render_comercio_coupons_table($coupons) {
     echo '<thead>';
     echo '<tr>';
     echo '<th>Código</th>';
-    echo '<th>Propuesta</th>';
     echo '<th>Valor</th>';
     echo '<th>Propietario</th>';
     echo '<th>Estado</th>';
     echo '<th>Vigencia</th>';
+	echo '<th>Rol</th>';
     echo '<th>Acciones</th>';
     echo '</tr>';
     echo '</thead>';
@@ -301,9 +337,6 @@ function cs_render_comercio_coupons_table($coupons) {
         
         // Código
         echo '<td><strong>' . esc_html($coupon->codigo_serie) . '</strong></td>';
-        
-        // Propuesta
-        echo '<td>' . esc_html($coupon->propuesta_nombre ?: 'N/A') . '</td>';
         
         // Valor
         echo '<td>';
@@ -316,16 +349,20 @@ function cs_render_comercio_coupons_table($coupons) {
         
         // Propietario
         echo '<td>';
-        if ($coupon->propietario_nombre) {
-            echo esc_html($coupon->propietario_nombre);
-        } elseif ($coupon->propietario_email_real) {
-            echo esc_html($coupon->propietario_email_real);
-        } elseif ($coupon->propietario_email) {
-            echo esc_html($coupon->propietario_email);
-        } else {
-            echo '<em>Sin asignar</em>';
-        }
-        echo '</td>';
+        if ($coupon->propietario_email) {
+			echo esc_html($coupon->propietario_email);
+		} elseif ($coupon->propietario_user_id) {
+			$user_info = get_userdata($coupon->propietario_user_id);
+			if ($user_info) {
+				echo esc_html($user_info->display_name);  // o $user_info->user_login, o combinar nombre y apellido
+			} else {
+				echo esc_html($coupon->propietario_user_id); // fallback por si no encuentra usuario
+			}
+		} else {
+			echo '<em>Sin asignar</em>';
+		}
+		echo '</td>';
+
         
         // Estado
         $status_color = cs_get_status_color($coupon->estado);
@@ -339,14 +376,28 @@ function cs_render_comercio_coupons_table($coupons) {
         echo '<small>hasta ' . date_i18n('d/m/Y', strtotime($coupon->fecha_fin)) . '</small>';
         echo '</td>';
         
+		// Rol calculado
+		$rol = $coupon->rol_en_cupon ?? 'otro';
+		if ($rol === 'emisor') {
+			$rol_label = 'Emisor';
+		} elseif ($rol === 'propietario') {
+			$rol_label = 'Propietario';
+		} else {
+			$rol_label = '—';
+		}
+		echo '<td>' . esc_html($rol_label) . '</td>';
+		
         // Acciones (limitadas para comercios)
         echo '<td>';
         $actions = [];
         
         // Solo pueden transferir cupones pendientes o asignados por admin
-        if (in_array($coupon->estado, ['pendiente_comercio', 'asignado_admin'])) {
-            $actions[] = '<a href="#" onclick="transferCoupon(' . $coupon->id . ', \'' . esc_js($coupon->codigo_serie) . '\'); return false;">Asignar</a>';
-        }
+        if (
+			in_array($coupon->estado, ['asignado_admin', 'asignado_email', 'asignado_user'])
+			&& intval($coupon->propietario_user_id) === get_current_user_id()
+		) {
+			$actions[] = '<a href="' . admin_url('admin.php?page=cs_cupones&action=transfer&id=' . $coupon->id) . '">Transferir</a>';
+		}
         
         // Ver detalles básicos
         $actions[] = '<a href="#" onclick="viewCouponDetails(' . $coupon->id . '); return false;">Ver</a>';
@@ -361,34 +412,7 @@ function cs_render_comercio_coupons_table($coupons) {
     echo '</table>';
     
     // JavaScript para comercios
-    echo '<script>
-    function transferCoupon(couponId, couponCode) {
-        const email = prompt("Ingresa el email del destinatario del cupón " + couponCode + ":");
-        if (!email) return;
-        
-        if (!email.includes("@")) {
-            alert("Por favor ingresa un email válido");
-            return;
-        }
-        
-        if (confirm("¿Asignar el cupón " + couponCode + " a " + email + "?")) {
-            jQuery.post(ajaxurl, {
-                action: "cs_transfer_coupon",
-                coupon_id: couponId,
-                new_owner: email,
-                type: "email",
-                nonce: "' . wp_create_nonce('cs_coupon_action') . '"
-            }).done(function(response) {
-                if (response.success) {
-                    alert("Cupón asignado exitosamente");
-                    location.reload();
-                } else {
-                    alert("Error: " + response.data.message);
-                }
-            });
-        }
-    }
-    
+    echo '<script>    
     function viewCouponDetails(couponId) {
         // Abrir modal o redirigir a página de detalles
         window.open("' . admin_url('admin.php?page=cs_cupones&action=view&id=') . '" + couponId, "_blank");

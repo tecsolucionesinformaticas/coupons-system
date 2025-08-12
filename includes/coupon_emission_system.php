@@ -142,7 +142,7 @@ function cs_emit_coupons_for_cycle($proposal, $cycle_start_date, $cycle_number) 
             'fecha_inicio' => $cycle_start_date->format('Y-m-d'),
             'fecha_fin' => $end_date->format('Y-m-d'),
             'permite_uso_parcial' => $proposal->uso_parcial,
-            'estado' => 'pendiente_comercio',
+            'estado' => 'asignado_admin',
             'propietario_email' => null,
             'propietario_user_id' => null,
             'codigo_hash' => cs_generate_unique_hash(),

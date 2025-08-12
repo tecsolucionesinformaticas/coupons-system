@@ -76,7 +76,7 @@ function cs_render_coupon_stats($stats) {
     
     $status_labels = [
         'pendiente_comercio' => 'Pendientes',
-        'asignado_admin' => 'Asignados por Admin',
+        'asignado_admin' => 'Asignados al Admin',
         'asignado_email' => 'Asignados por Email',
         'asignado_user' => 'Asignados a Usuario',
         'parcial' => 'Parcialmente Usados',
@@ -501,9 +501,6 @@ function cs_get_status_label($status) {
 /**
  * Renderizar vista detallada de cupón
  */
-/**
- * Renderizar vista detallada de cupón
- */
 function cs_cupones_render_view() {
     $coupon_id = intval( $_GET['id'] ?? 0 );
 
@@ -515,6 +512,7 @@ function cs_cupones_render_view() {
     global $wpdb;
     $table_coupons   = $wpdb->prefix . 'coupons';
     $table_proposals = $wpdb->prefix . 'coupon_proposals';
+	$current_user_id = get_current_user_id();
 
     $coupon = $wpdb->get_row(
         $wpdb->prepare(
@@ -540,6 +538,19 @@ function cs_cupones_render_view() {
     if ( ! $coupon ) {
         echo '<div class="notice notice-error"><p>' . esc_html__( 'Cupón no encontrado.', 'cs' ) . '</p></div>';
         return;
+    }
+	
+    // Permitir acceso solo si:
+    // 1) Es administrador (manage_options)
+    // 2) Es propietario del cupón
+    // 3) Es el comercio emisor del cupón
+
+    if (
+        ! current_user_can( 'manage_options' ) &&
+        intval( $coupon->propietario_user_id ) !== $current_user_id &&
+        intval( $coupon->comercio_id ) !== $current_user_id
+    ) {
+        wp_die( esc_html__( 'No tenés permisos para ver este cupón.', 'cs' ) );
     }
 
     // Prepara valores para mostrar
@@ -572,7 +583,11 @@ function cs_cupones_render_view() {
 
     // Código serie / secreto / estado / comercio / propuesta
     echo '<tr><th>' . esc_html__( 'Código de Serie:', 'cs' ) . '</th><td><strong style="font-size:16px;">' . esc_html( $coupon->codigo_serie ) . '</strong></td></tr>';
-    echo '<tr><th>' . esc_html__( 'Código Secreto:', 'cs' ) . '</th><td><code style="background:#f0f0f0; padding:2px 6px;">' . esc_html( $coupon->codigo_secreto ) . '</code></td></tr>';
+	
+	$is_owner = intval($coupon->propietario_user_id) === $current_user_id;
+	if($is_owner){
+		echo '<tr><th>' . esc_html__( 'Código Secreto:', 'cs' ) . '</th><td><code style="background:#f0f0f0; padding:2px 6px;">' . esc_html( $coupon->codigo_secreto ) . '</code></td></tr>';
+	}
 
     $status_color = function_exists( 'cs_get_status_color' ) ? cs_get_status_color( $coupon->estado ) : '#000';
     $status_label = function_exists( 'cs_get_status_label' ) ? cs_get_status_label( $coupon->estado ) : esc_html( $coupon->estado );
@@ -651,15 +666,18 @@ function cs_cupones_render_view() {
     echo '<div style="flex:1; background:#fff; padding:20px; border:1px solid #ddd; border-radius:4px; height:fit-content;">';
     echo '<h2>' . esc_html__( 'Acciones', 'cs' ) . '</h2>';
 
-    // Botón transferir (según estados)
-    if ( in_array( $coupon->estado, array( 'pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user' ), true ) ) {
-        echo '<p><a href="' . $transfer_url . '" class="button button-primary">' . esc_html__( 'Transferir Cupón', 'cs' ) . '</a></p>';
-    }
+    $current_user = wp_get_current_user();
+	$is_admin = current_user_can( 'manage_options' );
 
-    // Anular cupón (si no está anulado ni completado)
-    if ( 'anulado' !== $coupon->estado && 'completado' !== $coupon->estado ) {
-        echo '<p><button type="button" onclick="cs_cancelCoupon(' . esc_attr( $coupon->id ) . ')" class="button" style="color:#dc3232;">' . esc_html__( 'Anular Cupón', 'cs' ) . '</button></p>';
-    }
+	// Transferir: solo si el estado permite y es propietario
+	if ( $is_owner && in_array( $coupon->estado, array( 'pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user' ), true ) ) {
+		echo '<p><a href="' . $transfer_url . '" class="button button-primary">' . esc_html__( 'Transferir Cupón', 'cs' ) . '</a></p>';
+	}
+
+	// Anular: solo si no anulado ni completado y si es admin
+	if ( $is_admin && 'anulado' !== $coupon->estado && 'completado' !== $coupon->estado ) {
+		echo '<p><button type="button" onclick="cs_cancelCoupon(' . esc_attr( $coupon->id ) . ')" class="button" style="color:#dc3232;">' . esc_html__( 'Anular Cupón', 'cs' ) . '</button></p>';
+	}
 
     // Canjear (si corresponde)
     if ( in_array( $coupon->estado, array( 'asignado_user', 'asignado_email', 'parcial' ), true ) ) {
@@ -773,26 +791,46 @@ function cs_cupones_render_view() {
  * Renderizar formulario de transferencia
  */
 function cs_cupones_render_transfer() {
-    $coupon_id = intval($_GET['id'] ?? 0);
-    
+	$coupon_id = intval($_GET['id'] ?? 0);
+	
     if (!$coupon_id) {
         echo '<div class="notice notice-error"><p>ID de cupón inválido.</p></div>';
         return;
     }
     
     // Procesar transferencia
-    if ($_POST && wp_verify_nonce($_POST['transfer_nonce'], 'transfer_coupon_' . $coupon_id)) {
-        try {
-            $new_owner = sanitize_text_field($_POST['new_owner']);
-            $transfer_type = sanitize_text_field($_POST['transfer_type']);
-            
-            cs_transfer_coupon($coupon_id, $new_owner, $transfer_type);
-            
-            echo '<div class="notice notice-success"><p>Cupón transferido exitosamente.</p></div>';
-        } catch (Exception $e) {
-            echo '<div class="notice notice-error"><p>Error: ' . esc_html($e->getMessage()) . '</p></div>';
-        }
-    }
+	if ( $_SERVER['REQUEST_METHOD'] === 'POST'
+		 && isset($_POST['transfer_nonce'])
+		 && wp_verify_nonce($_POST['transfer_nonce'], 'transfer_coupon_' . $coupon_id)
+	) {
+		$transfer_type = sanitize_text_field( $_POST['transfer_type'] ?? 'email' );
+
+		if ( $transfer_type === 'user_id' ) {
+			$new_owner = intval( $_POST['new_owner_user'] ?? 0 );
+			if ( $new_owner <= 0 ) {
+				echo '<div class="notice notice-error"><p>ID de usuario inválido.</p></div>';
+			} else {
+				try {
+					cs_transfer_coupon( $coupon_id, $new_owner, 'user_id' );
+					echo '<div class="notice notice-success"><p>Cupón transferido exitosamente.</p></div>';
+				} catch ( Exception $e ) {
+					echo '<div class="notice notice-error"><p>Error: ' . esc_html( $e->getMessage() ) . '</p></div>';
+				}
+			}
+		} else { // email
+			$new_owner = sanitize_email( $_POST['new_owner_email'] ?? '' );
+			if ( ! is_email( $new_owner ) ) {
+				echo '<div class="notice notice-error"><p>Email inválido.</p></div>';
+			} else {
+				try {
+					cs_transfer_coupon( $coupon_id, $new_owner, 'email' );
+					echo '<div class="notice notice-success"><p>Cupón transferido exitosamente.</p></div>';
+				} catch ( Exception $e ) {
+					echo '<div class="notice notice-error"><p>Error: ' . esc_html( $e->getMessage() ) . '</p></div>';
+				}
+			}
+		}
+	}
     
     global $wpdb;
     $coupon = $wpdb->get_row($wpdb->prepare(
@@ -824,24 +862,53 @@ function cs_cupones_render_transfer() {
     wp_nonce_field('transfer_coupon_' . $coupon_id, 'transfer_nonce');
     
     echo '<table class="form-table">';
-    echo '<tr>';
-    echo '<th><label for="transfer_type">Tipo de transferencia:</label></th>';
-    echo '<td>';
-    echo '<input type="radio" id="type_email" name="transfer_type" value="email" checked>';
-    echo '<label for="type_email">Por Email</label><br>';
-    echo '<input type="radio" id="type_user" name="transfer_type" value="user_id">';
-    echo '<label for="type_user">Por ID de Usuario</label>';
-    echo '</td>';
-    echo '</tr>';
-    
-    echo '<tr>';
-    echo '<th><label for="new_owner">Nuevo propietario:</label></th>';
-    echo '<td>';
-    echo '<input type="text" id="new_owner" name="new_owner" class="regular-text" required>';
-    echo '<p class="description">Ingresa el email o ID del nuevo propietario según el tipo seleccionado.</p>';
-    echo '</td>';
-    echo '</tr>';
-    echo '</table>';
+	// Obtener usuarios elegibles (ajusta roles según tu política)
+	$usuarios = get_users([
+		'role__in' => ['comercio'], // <-- ajustar
+		'orderby' => 'display_name',
+		'order' => 'ASC'
+	]);
+
+	if (in_array('comercio', wp_get_current_user()->roles)) {
+		// Para comercio: solo email, sin radio
+		echo '<input type="hidden" name="transfer_type" value="email">';
+		echo '<tr>';
+		echo '<th><label for="new_owner_email">Nuevo propietario (email):</label></th>';
+		echo '<td><input type="email" id="new_owner_email" name="new_owner_email" class="regular-text" required></td>';
+		echo '</tr>';
+	} else {
+		// Para admin: radio + email y select
+		echo '<tr>';
+		echo '<th><label for="transfer_type">Tipo de transferencia:</label></th>';
+		echo '<td>';
+		echo '<input type="radio" id="type_email" name="transfer_type" value="email" checked>';
+		echo '<label for="type_email">Por Email</label><br>';
+		echo '<input type="radio" id="type_user" name="transfer_type" value="user_id">';
+		echo '<label for="type_user">Por Usuario</label>';
+		echo '</td>';
+		echo '</tr>';
+
+		echo '<tr class="transfer_email_row">';
+		echo '<th><label for="new_owner_email">Nuevo propietario (email):</label></th>';
+		echo '<td><input type="email" id="new_owner_email" name="new_owner_email" class="regular-text" required></td>';
+		echo '</tr>';
+
+		echo '<tr class="transfer_user_row" style="display:none;">';
+		echo '<th><label for="new_owner_user">Nuevo propietario (usuario):</label></th>';
+		echo '<td>';
+		echo '<select id="new_owner_user" name="new_owner_user">';
+		echo '<option value="">-- Seleccione un usuario --</option>';
+		foreach ($usuarios as $u) {
+			echo '<option value="' . esc_attr($u->ID) . '">' . esc_html($u->display_name . ' (' . $u->user_email . ')') . '</option>';
+		}
+		echo '</select>';
+		echo '</td>';
+		echo '</tr>';
+	}
+
+	echo '<tr><td colspan="2"><p class="description">Selecciona un usuario o ingresa un email según el tipo elegido.</p></td></tr>';
+	echo '</table>';
+
     
     echo '<p class="submit">';
     echo '<input type="submit" class="button button-primary" value="Transferir Cupón">';
@@ -852,6 +919,36 @@ function cs_cupones_render_transfer() {
     echo '</div>';
     
     echo '</div>';
+	echo "
+		<script>
+		document.addEventListener('DOMContentLoaded', function(){
+			const typeEmail = document.getElementById('type_email');
+			const typeUser  = document.getElementById('type_user');
+			const inputEmail = document.getElementById('new_owner_email');
+			const selectUser = document.getElementById('new_owner_user');
+
+			function toggleFields() {
+				if (typeEmail.checked) {
+					inputEmail.style.display = '';
+					inputEmail.required = true;
+					selectUser.style.display = 'none';
+					selectUser.required = false;
+				} else {
+					inputEmail.style.display = 'none';
+					inputEmail.required = false;
+					selectUser.style.display = '';
+					selectUser.required = true;
+				}
+			}
+
+			typeEmail.addEventListener('change', toggleFields);
+			typeUser.addEventListener('change', toggleFields);
+			// Inicial
+			toggleFields();
+		});
+		</script>
+
+	";
 }
 
 /**

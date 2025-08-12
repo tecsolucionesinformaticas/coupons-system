@@ -100,39 +100,91 @@ class CS_Coupon_Manager {
     /**
      * Cupones para comercios (solo los suyos)
      */
-    private function get_comercio_coupons($comercio_id, $filters = []) {
-        $where_conditions = ['c.comercio_id = %d'];
-        $params = [$comercio_id];
-        
-        // Aplicar filtros adicionales
-        if (!empty($filters['estado'])) {
-            $where_conditions[] = 'c.estado = %s';
-            $params[] = $filters['estado'];
-        }
-        
-        if (!empty($filters['search'])) {
-            $search = '%' . $filters['search'] . '%';
-            $where_conditions[] = '(c.codigo_serie LIKE %s OR p.nombre LIKE %s)';
-            $params[] = $search;
-            $params[] = $search;
-        }
-        
-        $where_sql = implode(' AND ', $where_conditions);
-        
-        $sql = "
-            SELECT c.*, 
-                   p.nombre as propuesta_nombre,
-                   owner.display_name as propietario_nombre,
-                   owner.user_email as propietario_email_real
-            FROM {$this->table_coupons} c
-            LEFT JOIN {$this->table_proposals} p ON c.proposal_id = p.id
-            LEFT JOIN {$this->wpdb->users} owner ON c.propietario_user_id = owner.ID
-            WHERE {$where_sql}
-            ORDER BY c.created_at DESC
-        ";
-        
-        return $this->wpdb->get_results($this->wpdb->prepare($sql, $params));
-    }
+	public function get_comercio_coupons($user_id, $filters = []) {
+		global $wpdb;
+		$table_coupons    = $wpdb->prefix . 'coupons';
+		$table_propuestas = $wpdb->prefix . 'coupon_proposals';
+		error_log('Filters en get_comercio_coupons: ' . print_r($filters, true));
+
+		// Obtener comercio_id asociado a este usuario.
+		// Ajusta esto según cómo guardes la relación (user_meta, tabla, etc.)
+		$comercio_id = get_user_meta($user_id, 'comercio_id', true);
+		// Si no existe mapping explícito, intenta asumir que el user_id es el comercio_id
+		if (empty($comercio_id)) {
+			$comercio_id = (int) $user_id;
+		}
+
+		// Base WHERE: cupones donde es propietario actual o fue emitido por su comercio
+		$where_clauses = ["(c.propietario_user_id = %d OR c.comercio_id = %d)"];
+		$params = [$user_id, $comercio_id];
+
+		// Filtros extras: estado
+		if (!empty($filters['estado'])) {
+			$where_clauses[] = "c.estado = %s";
+			$params[] = sanitize_text_field($filters['estado']);
+		}
+
+		// Filtro de búsqueda (código o nombre de propuesta)
+		if (!empty($filters['search'])) {
+			$search = '%' . $wpdb->esc_like($filters['search']) . '%';
+			$where_clauses[] = "(c.codigo_serie LIKE %s OR p.nombre LIKE %s)";
+			$params[] = $search;
+			$params[] = $search;
+		}
+
+		error_log('Filtro rol: ' . print_r($filters['rol'] ?? 'null', true));
+
+		// Filtro por rol: propietario / emisor
+		if (!empty($filters['rol'])) {
+			if ($filters['rol'] === 'propietario') {
+				$where_clauses[] = "c.propietario_user_id = %d";
+				$params[] = $user_id;
+			} elseif ($filters['rol'] === 'emisor') {
+				$where_clauses[] = "c.comercio_id = %d";
+				$params[] = $comercio_id;
+			}
+			// si viene otro valor ignoramos (o podrías devolver error)
+		}
+
+		$where_sql = implode(' AND ', $where_clauses);
+
+		// SQL: calculamos rol_en_cupon (emisor o propietario). Si por inconsistencia ambos, elegimos 'emisor'
+		$sql = "
+			SELECT
+				c.*,
+				p.nombre AS propuesta_nombre,
+				CASE
+					WHEN c.comercio_id = %d THEN 'emisor'
+					WHEN c.propietario_user_id = %d THEN 'propietario'
+					ELSE 'otro'
+				END AS rol_en_cupon
+			FROM {$table_coupons} AS c
+			LEFT JOIN {$table_propuestas} AS p ON p.id = c.proposal_id
+			WHERE {$where_sql}
+			ORDER BY c.created_at DESC
+		";
+
+		// Preparar parámetros en el orden que usa el SQL:
+		// 1) CASE placeholders: comercio_id, user_id
+		// 2) luego los params construidos arriba ($params)
+		$prepare_params = array_merge([(int)$comercio_id, (int)$user_id], $params);
+
+		$results = $wpdb->get_results( $wpdb->prepare($sql, ...$prepare_params) );
+
+		// Si detectás cupón con rol 'otro' (no debería ocurrir porque WHERE ya limita), podés loguearlo:
+		foreach ($results as $r) {
+			if ($r->rol_en_cupon === 'otro') {
+				error_log("CS: cupón id {$r->id} devuelto con rol 'otro' para user {$user_id} / comercio {$comercio_id}");
+			}
+			// Si por inconsistencia ambos son iguales (improbable), podrías loguearlo:
+			if ($r->propietario_user_id == $r->comercio_id) {
+				error_log("CS: inconsistencia: cupón {$r->id} tiene propietario_user_id == comercio_id ({$r->propietario_user_id})");
+			}
+		}
+
+		return $results;
+	}
+
     
     /**
      * Cupones para usuarios finales (solo los asignados)
@@ -180,12 +232,12 @@ class CS_Coupon_Manager {
         if (!current_user_can('manage_options') && !$this->user_can_transfer_coupon($coupon_id)) {
             throw new Exception('No tienes permisos para transferir este cupón.');
         }
-        
+		       
         $coupon = $this->wpdb->get_row($this->wpdb->prepare(
             "SELECT * FROM {$this->table_coupons} WHERE id = %d",
             $coupon_id
         ));
-        
+
         if (!$coupon) {
             throw new Exception('Cupón no encontrado.');
         }
@@ -193,11 +245,23 @@ class CS_Coupon_Manager {
         if (!in_array($coupon->estado, ['pendiente_comercio', 'asignado_admin', 'asignado_email', 'asignado_user'])) {
             throw new Exception('Este cupón no puede ser transferido en su estado actual.');
         }
-        
-        // Validar que no se transfiera a sí mismo
+
         $current_user_id = get_current_user_id();
         $current_user = get_userdata($current_user_id);
+
+		// Bloquear si emisor y propietario son la misma entidad
+		if ($transfer_type === 'email') {
+			$existing_user = get_user_by('email', $new_owner_identifier);
+			if ($existing_user && intval($existing_user->ID) === intval($coupon->comercio_id)) {
+				throw new Exception('No se puede transferir. El comercio no puede ser emisor y propietario de su propio ticket.');
+			}
+		} elseif ($transfer_type === 'user_id') {
+			if (intval($new_owner_identifier) === intval($coupon->comercio_id)) {
+				throw new Exception('No se puede transferir. El comercio no puede ser emisor y propietario de su propio ticket.');
+			}
+		}
         
+        // Validar que no se transfiera a sí mismo       
         if ($transfer_type === 'user_id') {
             if (intval($new_owner_identifier) === $current_user_id) {
                 throw new Exception('No puedes transferir un cupón a ti mismo.');
@@ -271,27 +335,27 @@ class CS_Coupon_Manager {
     /**
      * Verificar si el usuario puede transferir un cupón específico
      */
-    private function user_can_transfer_coupon($coupon_id) {
-        $current_user_id = get_current_user_id();
-        $user = get_userdata($current_user_id);
-        
-        // Admin siempre puede
-        if (user_can($user, 'manage_options')) {
-            return true;
-        }
-        
-        // Comercio puede transferir sus propios cupones
-        if (in_array('comercio', $user->roles)) {
-            $coupon = $this->wpdb->get_row($this->wpdb->prepare(
-                "SELECT comercio_id FROM {$this->table_coupons} WHERE id = %d",
-                $coupon_id
-            ));
-            
-            return $coupon && intval($coupon->comercio_id) === $current_user_id;
-        }
-        
-        return false;
-    }
+	private function user_can_transfer_coupon($coupon_id) {
+		$current_user_id = get_current_user_id();
+		$user = get_userdata($current_user_id);
+
+		// Admin siempre puede
+		if (user_can($user, 'manage_options')) {
+			return true;
+		}
+
+		// Comercio solo puede transferir cupones de su propiedad
+		if (in_array('comercio', $user->roles)) {
+			$coupon = $this->wpdb->get_row($this->wpdb->prepare(
+				"SELECT propietario_user_id FROM {$this->table_coupons} WHERE id = %d",
+				$coupon_id
+			));
+
+			return $coupon && intval($coupon->propietario_user_id) === $current_user_id;
+		}
+
+		return false;
+	}
     
     /**
      * Registrar transferencia de cupón
@@ -505,6 +569,11 @@ class CS_Coupon_Manager {
      * Obtener estadísticas de cupones
      */
     public function get_coupon_stats($comercio_id = null) {
+        // Si es un comercio logueado, forzamos su propio ID
+        if (current_user_can('comercio_role')) {
+            $comercio_id = get_current_user_id();
+        }
+
         $where_clause = $comercio_id ? "WHERE comercio_id = " . intval($comercio_id) : "";
         
         $stats = $this->wpdb->get_results("
@@ -584,6 +653,29 @@ function cs_cancel_coupon($coupon_id, $reason = '') {
  */
 function cs_get_user_coupons($filters = []) {
     $manager = cs_get_coupon_manager();
+    
+    if (!empty($_GET['estado'])) {
+        $estado = sanitize_text_field($_GET['estado']);
+        
+        if ($estado === 'asignado_cliente') {
+            // Aquí guardamos directamente el array para filtrar por varios estados
+            $filters['estado'] = ['asignado_email', 'asignado_user'];
+        } else {
+            $filters['estado'] = [$estado];  // siempre como array para simplificar lógica en la consulta
+        }
+    }
+    
+    if (!empty($_GET['s'])) {
+        $filters['search'] = sanitize_text_field($_GET['s']);
+    }
+    
+    if (!empty($_GET['rol'])) {
+        $rol = sanitize_text_field($_GET['rol']);
+        if (in_array($rol, ['propietario', 'emisor'], true)) {
+            $filters['rol'] = $rol;
+        }
+    }
+    
     return $manager->get_coupons_for_user(get_current_user_id(), $filters);
 }
 
@@ -618,20 +710,39 @@ add_action('wp_ajax_cs_redeem_coupon', 'cs_ajax_redeem_coupon');
 add_action('wp_ajax_cs_cancel_coupon', 'cs_ajax_cancel_coupon');
 
 function cs_ajax_transfer_coupon() {
+    // Seguridad básica
+    $coupon_id = intval( $_POST['coupon_id'] ?? 0 );
+    if ( ! $coupon_id ) {
+        wp_send_json_error(['message' => 'ID de cupón inválido.']);
+    }
+
+    // Nonce: enviá el mismo nonce 'transfer_nonce' en el request (campo name 'security')
+    if ( ! check_ajax_referer( 'transfer_coupon_' . $coupon_id, 'security', false ) ) {
+        wp_send_json_error(['message' => 'Nonce inválido.']);
+    }
+
+	$transfer_type = sanitize_text_field( $_POST['transfer_type'] ?? 'email' );
+	if ( ! in_array( $transfer_type, ['email', 'user_id'], true ) ) {
+		wp_send_json_error(['message' => 'Tipo de transferencia inválido.']);
+	}
+
     try {
-        if (!wp_verify_nonce($_POST['nonce'], 'cs_coupon_action')) {
-            throw new Exception('Nonce inválido');
+        if ( $transfer_type === 'user_id' ) {
+            $new_owner = intval( $_POST['new_owner_user'] ?? 0 );
+            if ( $new_owner <= 0 ) {
+                throw new Exception('ID de usuario inválido.');
+            }
+            cs_transfer_coupon( $coupon_id, $new_owner, 'user_id' );
+        } else {
+            $new_owner = sanitize_email( $_POST['new_owner_email'] ?? '' );
+            if ( ! is_email( $new_owner ) ) {
+                throw new Exception('Email inválido.');
+            }
+            cs_transfer_coupon( $coupon_id, $new_owner, 'email' );
         }
-        
-        $coupon_id = intval($_POST['coupon_id']);
-        $new_owner = sanitize_text_field($_POST['new_owner']);
-        $type = sanitize_text_field($_POST['type']);
-        
-        cs_transfer_coupon($coupon_id, $new_owner, $type);
-        
-        wp_send_json_success(['message' => 'Cupón transferido exitosamente']);
-        
-    } catch (Exception $e) {
+
+        wp_send_json_success(['message' => 'Transferencia realizada.']);
+    } catch ( Exception $e ) {
         wp_send_json_error(['message' => $e->getMessage()]);
     }
 }
