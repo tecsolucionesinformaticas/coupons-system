@@ -954,7 +954,11 @@ function cs_cupones_render_transfer() {
 		echo '</tr>';
 	}
 
-	echo '<tr><td colspan="2"><p class="description">Selecciona un usuario o ingresa un email según el tipo elegido.</p></td></tr>';
+	echo '<tr><td colspan="2">';
+    echo '<p style="color: #a00; font-weight: bold; background-color: #fdd; padding: 10px; border: 1px solid #a00; border-radius: 4px;">';
+    echo 'Atención: La transferencia es irreversible. Verifique que el destinatario sea el correcto.';
+    echo '</p>';
+    echo '</td></tr>';
 	echo '</table>';
 
     
