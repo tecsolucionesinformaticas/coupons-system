@@ -315,7 +315,7 @@ class CS_Coupon_Manager {
             $this->table_coupons,
             $update_data,
             ['id' => $coupon_id],
-            ['%s', '%s', '%s', '%d'], // Formatos para los valores
+            ['%s', '%s', '%s', '%s'], // Formatos para los valores
             ['%d'] // Formato para el WHERE
         );
         

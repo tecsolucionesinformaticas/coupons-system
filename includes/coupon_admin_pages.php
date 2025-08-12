@@ -974,17 +974,19 @@ function cs_cupones_render_transfer() {
 			const typeUser  = document.getElementById('type_user');
 			const inputEmail = document.getElementById('new_owner_email');
 			const selectUser = document.getElementById('new_owner_user');
+			const emailRow = document.querySelector('.transfer_email_row');
+			const userRow = document.querySelector('.transfer_user_row');
 
 			function toggleFields() {
 				if (typeEmail.checked) {
-					inputEmail.style.display = '';
+					emailRow.style.display = '';
 					inputEmail.required = true;
-					selectUser.style.display = 'none';
+					userRow.style.display = 'none';
 					selectUser.required = false;
 				} else {
-					inputEmail.style.display = 'none';
+					emailRow.style.display = 'none';
 					inputEmail.required = false;
-					selectUser.style.display = '';
+					userRow.style.display = '';
 					selectUser.required = true;
 				}
 			}
