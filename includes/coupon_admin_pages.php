@@ -69,58 +69,106 @@ function cs_cupones_render_list() {
 }
 
 /**
- * Renderizar estadísticas de cupones
+ * Renderizar estadísticas de cupones separadas por tipo
  */
 function cs_render_coupon_stats($stats) {
-    echo '<div class="cs-stats-container" style="display: flex; gap: 20px; margin: 20px 0; flex-wrap: wrap;">';
-    
+    // Mapeo de estados a etiquetas
     $status_labels = [
         'pendiente_comercio' => 'Pendientes',
-        'asignado_admin' => 'Asignados al Admin',
-        'asignado_email' => 'Asignados por Email',
-        'asignado_user' => 'Asignados a Usuario',
-        'parcial' => 'Parcialmente Usados',
-        'completado' => 'Completados',
-        'anulado' => 'Anulados',
-        'vencido' => 'Vencidos'
+        'asignado_admin'     => 'Asignados al Admin',
+        'cliente'            => 'Asignado al Cliente', // Nuevo estado combinado
+        'parcial'            => 'Parcialmente Usados',
+        'completado'         => 'Completados',
+        'anulado'            => 'Anulados',
+        'vencido'            => 'Vencidos'
     ];
-    
-    foreach ($status_labels as $status => $label) {
-        if (isset($stats['by_status'][$status])) {
-            $stat = $stats['by_status'][$status];
-            $color = cs_get_status_color($status);
-            
-            echo '<div class="cs-stat-card" style="
-                border: 1px solid #ddd; 
-                padding: 15px; 
-                border-radius: 4px; 
-                background: white;
-                border-left: 4px solid ' . $color . ';
-                min-width: 150px;
-            ">';
-            echo '<h3 style="margin: 0 0 10px 0; color: ' . $color . ';">' . $stat['count'] . '</h3>';
-            echo '<p style="margin: 0; font-weight: bold;">' . $label . '</p>';
-            echo '<small>Valor: $' . number_format($stat['remaining_value'], 2) . '</small>';
-            echo '</div>';
+
+    // Iterar por cada tipo (importe / unidad)
+    foreach (['importe', 'unidad'] as $tipo) {
+        if (!isset($stats[$tipo])) continue;
+
+        echo '<h2 style="margin-top:30px;">' . ucfirst($tipo) . '</h2>';
+        echo '<div class="cs-stats-container" style="display: flex; gap: 20px; margin: 20px 0; flex-wrap: wrap;">';
+
+        // Preprocesar para combinar asignado_email + asignado_user en "cliente"
+        $by_status = $stats[$tipo]['by_status'];
+        if (isset($by_status['asignado_email']) || isset($by_status['asignado_user'])) {
+            $count = 0;
+            $total_value = 0;
+            $remaining_value = 0;
+
+            if (isset($by_status['asignado_email'])) {
+                $count += $by_status['asignado_email']['count'];
+                $total_value += $by_status['asignado_email']['total_value'];
+                $remaining_value += $by_status['asignado_email']['remaining_value'];
+                unset($by_status['asignado_email']);
+            }
+            if (isset($by_status['asignado_user'])) {
+                $count += $by_status['asignado_user']['count'];
+                $total_value += $by_status['asignado_user']['total_value'];
+                $remaining_value += $by_status['asignado_user']['remaining_value'];
+                unset($by_status['asignado_user']);
+            }
+
+            $by_status['cliente'] = [
+                'count' => $count,
+                'total_value' => $total_value,
+                'remaining_value' => $remaining_value
+            ];
         }
+
+        // Renderizar tarjetas por estado
+        foreach ($status_labels as $status => $label) {
+            if (isset($by_status[$status])) {
+                $stat = $by_status[$status];
+                $color = cs_get_status_color($status);
+
+                echo '<div class="cs-stat-card" style="
+                    border: 1px solid #ddd; 
+                    padding: 15px; 
+                    border-radius: 4px; 
+                    background: white;
+                    border-left: 4px solid ' . $color . ';
+                    min-width: 150px;
+                ">';
+                echo '<h3 style="margin: 0 0 10px 0; color: ' . $color . ';">' . $stat['count'] . '</h3>';
+                echo '<p style="margin: 0; font-weight: bold;">' . $label . '</p>';
+
+                // Mostrar "Valor" solo en tipo importe, en unidades mostrar "Cantidad"
+                if ($tipo === 'importe') {
+                    echo '<small>Valor: $' . number_format($stat['remaining_value'], 2) . '</small>';
+                } else {
+                    echo '<small>Cantidad restante: ' . intval($stat['remaining_value']) . '</small>';
+                }
+
+                echo '</div>';
+            }
+        }
+
+        // Tarjeta total
+        echo '<div class="cs-stat-card" style="
+            border: 1px solid #ddd; 
+            padding: 15px; 
+            border-radius: 4px; 
+            background: #f0f8ff;
+            border-left: 4px solid #0073aa;
+            min-width: 150px;
+        ">';
+        echo '<h3 style="margin: 0 0 10px 0; color: #0073aa;">' . $stats[$tipo]['totals']['count'] . '</h3>';
+        echo '<p style="margin: 0; font-weight: bold;">Total Cupones</p>';
+
+        if ($tipo === 'importe') {
+            echo '<small>Valor restante: $' . number_format($stats[$tipo]['totals']['remaining'], 2) . '</small>';
+        } else {
+            echo '<small>Cantidad restante: ' . intval($stats[$tipo]['totals']['remaining']) . '</small>';
+        }
+
+        echo '</div>';
+
+        echo '</div>'; // fin contenedor
     }
-    
-    // Total
-    echo '<div class="cs-stat-card" style="
-        border: 1px solid #ddd; 
-        padding: 15px; 
-        border-radius: 4px; 
-        background: #f0f8ff;
-        border-left: 4px solid #0073aa;
-        min-width: 150px;
-    ">';
-    echo '<h3 style="margin: 0 0 10px 0; color: #0073aa;">' . $stats['totals']['count'] . '</h3>';
-    echo '<p style="margin: 0; font-weight: bold;">Total Cupones</p>';
-    echo '<small>Valor restante: $' . number_format($stats['totals']['remaining'], 2) . '</small>';
-    echo '</div>';
-    
-    echo '</div>';
 }
+
 
 /**
  * Obtener color según estado

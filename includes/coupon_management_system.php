@@ -566,48 +566,66 @@ class CS_Coupon_Manager {
     }
     
     /**
-     * Obtener estadísticas de cupones
-     */
-    public function get_coupon_stats($comercio_id = null) {
-        // Si es un comercio logueado, forzamos su propio ID
-        if (current_user_can('comercio_role')) {
-            $comercio_id = get_current_user_id();
-        }
+	 * Obtener estadísticas de cupones separadas por tipo
+	 */
+	public function get_coupon_stats($comercio_id = null) {
+		// Si es un comercio logueado, forzamos su propio ID
+		if (current_user_can('comercio_role')) {
+			$comercio_id = get_current_user_id();
+		}
 
-        $where_clause = $comercio_id ? "WHERE comercio_id = " . intval($comercio_id) : "";
-        
-        $stats = $this->wpdb->get_results("
-            SELECT 
-                estado,
-                COUNT(*) as total,
-                SUM(valor) as valor_total,
-                SUM(valor_restante) as valor_restante_total
-            FROM {$this->table_coupons}
-            {$where_clause}
-            GROUP BY estado
-        ");
-        
-        $formatted_stats = [];
-        $totals = ['count' => 0, 'value' => 0, 'remaining' => 0];
-        
-        foreach ($stats as $stat) {
-            $formatted_stats[$stat->estado] = [
-                'count' => intval($stat->total),
-                'total_value' => floatval($stat->valor_total),
-                'remaining_value' => floatval($stat->valor_restante_total)
-            ];
-            
-            $totals['count'] += intval($stat->total);
-            $totals['value'] += floatval($stat->valor_total);
-            $totals['remaining'] += floatval($stat->valor_restante_total);
-        }
-        
-        return [
-            'by_status' => $formatted_stats,
-            'totals' => $totals
-        ];
-    }
+		$where_clause = $comercio_id ? "WHERE comercio_id = " . intval($comercio_id) : "";
+
+		$stats = $this->wpdb->get_results("
+			SELECT 
+				tipo,
+				estado,
+				COUNT(*) as total,
+				SUM(valor) as valor_total,
+				SUM(valor_restante) as valor_restante_total
+			FROM {$this->table_coupons}
+			{$where_clause}
+			GROUP BY tipo, estado
+		");
+
+		// Estructura final: separada por tipo
+		$formatted_stats = [
+			'importe' => [
+				'by_status' => [],
+				'totals' => ['count' => 0, 'value' => 0, 'remaining' => 0]
+			],
+			'unidad' => [
+				'by_status' => [],
+				'totals' => ['count' => 0, 'value' => 0, 'remaining' => 0]
+			]
+		];
+
+		foreach ($stats as $stat) {
+			$tipo = $stat->tipo; // 'importe' o 'unidad'
+			if (!isset($formatted_stats[$tipo])) {
+				// Por si aparece un tipo desconocido
+				$formatted_stats[$tipo] = [
+					'by_status' => [],
+					'totals' => ['count' => 0, 'value' => 0, 'remaining' => 0]
+				];
+			}
+
+			$formatted_stats[$tipo]['by_status'][$stat->estado] = [
+				'count' => intval($stat->total),
+				'total_value' => floatval($stat->valor_total),
+				'remaining_value' => floatval($stat->valor_restante_total)
+			];
+
+			// Sumar totales para ese tipo
+			$formatted_stats[$tipo]['totals']['count'] += intval($stat->total);
+			$formatted_stats[$tipo]['totals']['value'] += floatval($stat->valor_total);
+			$formatted_stats[$tipo]['totals']['remaining'] += floatval($stat->valor_restante_total);
+		}
+
+		return $formatted_stats;
+	}
 }
+
 
 /**
  * Funciones de utilidad para cupones
