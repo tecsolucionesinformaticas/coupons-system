@@ -60,6 +60,13 @@ function cs_handle_propuestas_actions($action) {
                 cs_propuestas_handle_approve();
             }
 			break;
+			
+		case 'reject':
+            // Solo manejar si es GET con nonce válido
+            if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['_wpnonce'])) {
+                cs_propuestas_handle_reject();
+            }
+			break;
     }
     
     // Manejar acciones masivas POST independientemente de la acción GET

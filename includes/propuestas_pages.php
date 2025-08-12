@@ -24,6 +24,7 @@ function cs_propuestas_page() {
             cs_propuestas_render_view(); // Debería verificar internamente si el usuario puede ver esa propuesta
             break;
 
+		case 'list':
         default:
             cs_propuestas_render_list(); // Acá hacemos la distinción por tipo de usuario
             break;
@@ -197,6 +198,7 @@ function cs_show_admin_messages() {
         'approved' => ['success', 'Propuesta aprobada correctamente.'],
         'deleted' => ['success', 'Propuesta eliminada correctamente.'],
         'mass_approved' => ['success', function($count) { return "$count propuesta(s) aprobada(s) correctamente."; }],
+		'mass_rejected' => ['success', function($count) { return "$count propuesta(s) rechazada(s) correctamente."; }],
         'mass_deleted' => ['success', function($count) { return "$count propuesta(s) eliminada(s) correctamente."; }],
         'mass_errors' => ['error', function($errors) { return "Errores durante la operación: " . esc_html(urldecode($errors)); }],
         'error' => ['error', 'Ha ocurrido un error.'],

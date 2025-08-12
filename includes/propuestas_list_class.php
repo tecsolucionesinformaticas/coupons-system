@@ -247,8 +247,20 @@ class Proposals_List_Table extends WP_List_Table {
                 ))
             );
         }
+		
+		// Botón Rechazar (solo si está pendiente y usuario NO es el creador)
+		$current_user_id = get_current_user_id();
+		if ($item['estado'] === 'pendiente' && intval($item['creado_por']) !== $current_user_id) {
+			$actions['reject'] = sprintf(
+				'<a href="%s" class="button button-small button-danger" onclick="return confirm(\'¿Seguro que deseas rechazar esta propuesta?\')">Rechazar</a>',
+				esc_url(wp_nonce_url(
+					admin_url("admin.php?page=cs_propuestas&action=reject&id={$propuesta_id}"),
+					'cs_reject_propuesta_' . $propuesta_id
+				))
+			);
+		}
         
-        // Botón Eliminar (siempre disponible para admin)
+        // Botón Eliminar (solo admin y pendiente)
         if (current_user_can('manage_options') && $item['estado'] === 'pendiente') {
             $actions['delete'] = sprintf(
                 '<a href="%s" class="button button-small cs-delete-link" data-propuesta-id="%d" data-nombre="%s" data-comercio="%s">Eliminar</a>',
@@ -278,6 +290,7 @@ class Proposals_List_Table extends WP_List_Table {
         $actions = [];
         
 		$actions['approve'] = 'Aprobar seleccionadas';
+		$actions['reject'] = 'Rechazar seleccionadas';
 		$actions['delete'] = 'Eliminar seleccionadas';
         
         return $actions;

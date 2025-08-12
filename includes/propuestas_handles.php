@@ -276,6 +276,96 @@ function cs_propuestas_handle_approve($id = null) {
     }
 }
 
+function cs_propuestas_handle_reject($id = null) {
+    global $wpdb;
+
+    if ($id === null) {
+        $id = intval($_GET['id'] ?? 0);
+
+        if (!defined('CS_MASS_OPERATION')) {
+            $nonce = $_GET['_wpnonce'] ?? '';
+            if (!wp_verify_nonce($nonce, 'cs_reject_propuesta_' . $id)) {
+                wp_die('Nonce inválido.');
+            }
+        }
+    }
+
+    if (!$id) {
+        if (!defined('CS_MASS_OPERATION')) {
+            wp_die('ID inválido.');
+        } else {
+            throw new Exception('ID inválido.');
+        }
+    }
+
+    $tabla = $wpdb->prefix . 'coupon_proposals';
+    $propuesta = $wpdb->get_row("SELECT * FROM $tabla WHERE id = $id");
+
+    if (!$propuesta) {
+        if (!defined('CS_MASS_OPERATION')) {
+            wp_die('La propuesta no existe o ya fue eliminada.');
+        } else {
+            throw new Exception('La propuesta no existe o ya fue eliminada.');
+        }
+    }
+
+    $current_user_id = get_current_user_id();
+
+    // No se puede rechazar si ya fue procesada
+    if ($propuesta->estado !== 'pendiente') {
+        if (!defined('CS_MASS_OPERATION')) {
+            wp_die('La propuesta ya fue procesada.');
+        } else {
+            throw new Exception('La propuesta ya fue procesada.');
+        }
+    }
+
+    // Validación de permisos
+    if (current_user_can('manage_options')) {
+        if ($propuesta->creado_por == $current_user_id) {
+            if (!defined('CS_MASS_OPERATION')) {
+                wp_die('No puede rechazar una propuesta que usted mismo creó.');
+            } else {
+                throw new Exception('No puede rechazar una propuesta que usted mismo creó.');
+            }
+        }
+    } else {
+        if ($propuesta->comercio_id != $current_user_id) {
+            if (!defined('CS_MASS_OPERATION')) {
+                wp_die('No tiene permiso para rechazar esta propuesta.');
+            } else {
+                throw new Exception('No tiene permiso para rechazar esta propuesta.');
+            }
+        }
+
+        if ($propuesta->creado_por == $current_user_id) {
+            if (!defined('CS_MASS_OPERATION')) {
+                wp_die('No puede rechazar una propuesta que usted mismo creó.');
+            } else {
+                throw new Exception('No puede rechazar una propuesta que usted mismo creó.');
+            }
+        }
+    }
+
+    $result = $wpdb->update($tabla, ['estado' => 'rechazado'], ['id' => $id]);
+
+    if ($result === false) {
+        error_log("Error al rechazar propuesta ID {$id}: {$wpdb->last_error}");
+        if (!defined('CS_MASS_OPERATION')) {
+            wp_die('Error al actualizar la propuesta.');
+        } else {
+            throw new Exception('Error al actualizar la propuesta.');
+        }
+    }
+
+    if (!defined('CS_MASS_OPERATION')) {
+        $redirect_url = admin_url('admin.php?page=cs_propuestas&rejected=1');
+        $redirect_url = cs_add_current_filters_to_url($redirect_url);
+        wp_redirect($redirect_url);
+        exit;
+    }
+}
+
 
 // Handler mejorado para acciones masivas
 function cs_propuestas_mass_action_handler() {   
@@ -300,7 +390,7 @@ function cs_propuestas_mass_action_handler() {
         $action = sanitize_text_field($_POST['action2'] ?? '');
     }
     
-    if (!in_array($action, ['approve', 'delete'])) {
+    if (!in_array($action, ['approve', 'reject', 'delete'])) {
         $redirect_url = admin_url('admin.php?page=cs_propuestas&error=invalid_action');
         $redirect_url = cs_add_current_filters_to_url($redirect_url);
         wp_redirect($redirect_url);
@@ -308,7 +398,7 @@ function cs_propuestas_mass_action_handler() {
     }
     
     // Contadores y errores
-    $counts = ['approved' => 0, 'deleted' => 0];
+    $counts = ['approved' => 0, 'rejected' => 0, 'deleted' => 0];
     $errors = [];
     
     // Definir que estamos en operación masiva
@@ -320,6 +410,10 @@ function cs_propuestas_mass_action_handler() {
                 case 'approve':
                     cs_propuestas_handle_approve($id);
                     $counts['approved']++;
+                    break;
+				case 'reject':
+                    cs_propuestas_handle_reject($id);
+                    $counts['rejected']++;
                     break;
                     
                 case 'delete':
@@ -338,6 +432,9 @@ function cs_propuestas_mass_action_handler() {
     // Agregar contadores de éxito
     if ($counts['approved'] > 0) {
         $redirect_url = add_query_arg('mass_approved', $counts['approved'], $redirect_url);
+    }
+	if ($counts['rejected'] > 0) {
+        $redirect_url = add_query_arg('mass_rejected', $counts['rejected'], $redirect_url);
     }
     if ($counts['deleted'] > 0) {
         $redirect_url = add_query_arg('mass_deleted', $counts['deleted'], $redirect_url);
